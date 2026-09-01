@@ -1368,7 +1368,6 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
                 setAssetLibraryOpen(false);
                 setShotRailOpen((open) => !open);
               }}
-              onAddShot={() => void addShot()}
               onToggleAssets={() => {
                 setShotRailOpen(false);
                 void refreshProjectAssets();
@@ -1384,6 +1383,7 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
             open={shotRailOpen}
             totalDuration={totalDuration}
             onClose={() => setShotRailOpen(false)}
+            onAddShot={() => void addShot()}
             onSelectShot={(shotId) => {
               setSelectedShotId(shotId);
               setSelectedNodeId(null);

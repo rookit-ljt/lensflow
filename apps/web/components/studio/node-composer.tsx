@@ -443,7 +443,7 @@ export function NodeComposer({ node, generation, providers, assets, contexts, bu
               }}
             />
             <div className="composer-prompt-meta">
-              <span><Sparkles />{isLocalH3 && referenceMode === "ref2va" ? "这里只写镜头意图，素材语义在下方绑定" : "输入 @ 可引用角色与素材"}</span>
+              <span><Sparkles />{isLocalH3 && referenceMode === "ref2va" ? "镜头意图写在这里，素材规则在下方" : "用 @ 引用素材"}</span>
               <span>{editorPrompt.length} 字</span>
             </div>
           </div>
@@ -859,7 +859,7 @@ export function NodeComposer({ node, generation, providers, assets, contexts, bu
           </>
         ) : (
           <div className="composer-empty-hint">
-            <Sparkles />选择一种生成方式，配置项会根据所选类型自动展开。
+            <Sparkles />先选择文本、图片或视频。
           </div>
         )}
       </div>

@@ -68,23 +68,23 @@ export const visibleCreationModeOrder: CreationMode[] = ["text", "image", "video
 
 export const creationModes: Record<CreationMode, CreationModeDefinition> = {
   text: {
-    label: "文本生成",
+    label: "文本",
     eyebrow: "TEXT CREATION",
-    placeholder: "描述要生成或改写的文本，例如分镜、对白、旁白……",
+    placeholder: "写下分镜、对白或旁白……",
     models: ["默认文本模型", "分镜生成", "叙事扩写", "对白润色"],
     icon: Type,
   },
   image: {
-    label: "图片生成",
+    label: "图片",
     eyebrow: "IMAGE CREATION",
-    placeholder: "描述画面、构图、人物和光线，也可以使用 @ 引用资产……",
+    placeholder: "描述画面，也可以用 @ 引用素材……",
     models: ["服务端默认图片模型"],
     icon: ImageIcon,
   },
   video: {
-    label: "视频生成",
+    label: "视频",
     eyebrow: "VIDEO CREATION",
-    placeholder: "描述镜头动作、主体运动、运镜和节奏……",
+    placeholder: "描述动作、运镜和节奏……",
     models: ["minimax-h3-local"],
     icon: AudioLines,
   },

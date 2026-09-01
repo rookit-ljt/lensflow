@@ -486,6 +486,148 @@ select {
   .auth-sequence__line i, .auth-loading i { animation: none; }
 }
 
+/* Minimal UI branch: keep the canvas quiet and make the next action obvious. */
+.studio-header .header-secondary-action,
+.studio-header .save-state {
+  display: none !important;
+}
+
+.studio-header {
+  height: 58px;
+  padding-inline: 18px;
+  border-bottom-color: rgba(255, 255, 255, 0.06);
+}
+
+.studio-header .brand-lockup {
+  width: 220px;
+}
+
+.studio-header .minimal-user div {
+  display: none;
+}
+
+.studio-header .minimal-user {
+  width: 30px;
+  margin-left: 2px;
+}
+
+.studio-header .header-actions {
+  gap: 5px;
+}
+
+.studio-header .header-actions [data-slot="button"] {
+  height: 36px;
+}
+
+.studio-header .header-icon-button {
+  width: 36px;
+}
+
+.studio-header .agent-button {
+  padding-inline: 12px;
+}
+
+.canvas-side-rail {
+  left: 14px;
+  width: 54px;
+  padding: 7px 5px 8px;
+  border-radius: 27px;
+}
+
+.canvas-side-rail [data-slot="button"] {
+  width: 40px;
+  height: 40px;
+}
+
+.canvas-side-rail [data-slot="separator"] {
+  width: 26px;
+}
+
+.node-composer {
+  --composer-width: clamp(560px, 43vw, 760px);
+  max-height: 350px;
+  border-radius: 18px;
+}
+
+.node-composer__header {
+  min-height: 48px;
+  padding-inline: 14px;
+}
+
+.node-composer__tabs [data-slot="tabs-trigger"] {
+  min-width: 78px;
+  height: 38px;
+}
+
+.node-composer__prompt-shell {
+  min-height: 126px;
+  padding: 12px;
+  border-radius: 16px;
+}
+
+.composer-source-actions [data-slot="button"] {
+  height: 52px;
+}
+
+.composer-prompt-field [data-slot="textarea"] {
+  min-height: 72px;
+}
+
+.chat-agent {
+  width: min(390px, calc(100vw - 84px));
+  border-radius: 18px;
+}
+
+.chat-agent__feedback-bar {
+  display: none;
+}
+
+.chat-agent__context {
+  padding-block: 11px;
+}
+
+.chat-agent__empty p {
+  max-width: 260px;
+  line-height: 1.65;
+}
+
+.panel-heading__actions {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+}
+
+@media (max-width: 900px) {
+  .studio-header {
+    padding-inline: 10px;
+  }
+
+  .studio-header .brand-lockup {
+    width: auto;
+  }
+
+  .studio-header .brand-name {
+    max-width: 100px;
+  }
+
+  .studio-header .view-switch {
+    display: none;
+  }
+
+  .node-composer {
+    --composer-width: auto;
+    right: 8px;
+    left: 72px;
+    width: auto;
+  }
+
+  .chat-agent {
+    width: auto;
+    right: 8px;
+    left: 72px;
+  }
+}
+
 /* Chat Agent Skill library */
 .skill-library {
   position: absolute;

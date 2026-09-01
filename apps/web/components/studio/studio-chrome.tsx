@@ -2,7 +2,6 @@ import {
   Bot,
   Boxes,
   Download,
-  Film,
   FolderArchive,
   LayoutDashboard,
   LogOut,
@@ -12,7 +11,6 @@ import {
   Share2,
   Settings2,
   Sparkles,
-  Users,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -112,7 +110,7 @@ export function StudioHeader({
         </Badge>
         <Tooltip>
           <TooltipTrigger
-            render={<Button className="header-icon-button" type="button" variant="outline" size="icon" onClick={onReload} />}
+            render={<Button className="header-icon-button header-secondary-action" type="button" variant="outline" size="icon" onClick={onReload} />}
           >
             <RefreshCw />
           </TooltipTrigger>
@@ -121,7 +119,7 @@ export function StudioHeader({
         {project ? (
           <Tooltip>
             <TooltipTrigger
-              render={<a className="header-icon-button header-export-link" href={projectExportUrl(project.id)} download={`libtv-project-${project.id}.json`} aria-label="导出项目备份" />}
+              render={<a className="header-icon-button header-export-link header-secondary-action" href={projectExportUrl(project.id)} download={`libtv-project-${project.id}.json`} aria-label="导出项目备份" />}
             >
               <Download />
             </TooltipTrigger>
@@ -137,7 +135,7 @@ export function StudioHeader({
         {/* <Button className="header-icon-button" type="button" variant="outline" size="icon" disabled aria-label="分享"><Share2 /></Button> */}
         {/* <Badge variant="outline" className="credit-pill"><Sparkles />100 <strong>开通会员</strong></Badge> */}
         <Button className="agent-button" type="button" variant="outline" onClick={() => onAgentOpenChange(true)}><Bot />Chat Agent</Button>
-        <div className="header-user" title={currentUser.email}>
+        <div className="header-user minimal-user" title={currentUser.email}>
           <span>{currentUser.display_name.slice(0, 1).toUpperCase()}</span>
           <div><strong>{currentUser.display_name}</strong><small>{currentUser.email}</small></div>
         </div>
@@ -155,7 +153,6 @@ export function StudioHeader({
 type CanvasSideRailProps = {
   onAddNode: () => void;
   onToggleShots: () => void;
-  onAddShot: () => void;
   onToggleAssets: () => void;
   onToggleAgent: () => void;
 };
@@ -163,7 +160,6 @@ type CanvasSideRailProps = {
 export function CanvasSideRail({
   onAddNode,
   onToggleShots,
-  onAddShot,
   onToggleAssets,
   onToggleAgent,
 }: CanvasSideRailProps) {
@@ -181,18 +177,6 @@ export function CanvasSideRail({
           <Boxes />
         </TooltipTrigger>
         <TooltipContent side="right">镜头列表</TooltipContent>
-      </Tooltip>
-      <Tooltip>
-        <TooltipTrigger render={<Button type="button" variant="ghost" size="icon" onClick={onAddShot} aria-label="新增镜头" />}>
-          <Film />
-        </TooltipTrigger>
-        <TooltipContent side="right">新增镜头</TooltipContent>
-      </Tooltip>
-      <Tooltip>
-        <TooltipTrigger render={<Button type="button" variant="ghost" size="icon" disabled aria-label="角色库" />}>
-          <Users />
-        </TooltipTrigger>
-        <TooltipContent side="right">角色库即将接入</TooltipContent>
       </Tooltip>
       <Tooltip>
         <TooltipTrigger render={<Button type="button" variant="ghost" size="icon" onClick={onToggleAssets} aria-label="资产库" />}>

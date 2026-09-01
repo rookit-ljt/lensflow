@@ -122,7 +122,7 @@ export function SkillLibrary({ open, skills, selectedSkillId, onClose, onSelect 
   return (
     <section className="skill-library" aria-label="Skill 库">
       <header className="skill-library__header">
-        <div><span className="skill-library__eyebrow">AGENT PLAYBOOK</span><h2>Skill</h2></div>
+        <div><span className="skill-library__eyebrow">AGENT</span><h2>Skill</h2></div>
         <div className="skill-library__header-actions">
           <Button type="button" variant="outline" onClick={() => setShowCreate((current) => !current)}><Plus />创建 <ChevronDown className={showCreate ? "is-open" : undefined} /></Button>
           <Button type="button" variant="outline" onClick={() => setTab("通用")} aria-label="显示全部 Skill">全部</Button>

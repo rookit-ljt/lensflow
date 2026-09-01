@@ -1,4 +1,4 @@
-import { X } from "lucide-react";
+import { Plus, X } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,7 @@ type ShotRailProps = {
   open: boolean;
   totalDuration: number;
   onClose: () => void;
+  onAddShot: () => void;
   onSelectShot: (shotId: string) => void;
 };
 
@@ -21,13 +22,17 @@ export function ShotRail({
   open,
   totalDuration,
   onClose,
+  onAddShot,
   onSelectShot,
 }: ShotRailProps) {
   return (
     <aside className={`shot-rail ${open ? "is-open" : ""}`} aria-label="镜头列表">
       <div className="panel-heading">
-        <div><span className="kicker">PROJECT DATA</span><h2>镜头表</h2></div>
-        <Button variant="ghost" size="icon" aria-label="关闭镜头列表" type="button" onClick={onClose}><X /></Button>
+        <div><span className="kicker">SHOTS</span><h2>镜头</h2></div>
+        <div className="panel-heading__actions">
+          <Button variant="ghost" size="icon" aria-label="新增镜头" type="button" onClick={onAddShot}><Plus /></Button>
+          <Button variant="ghost" size="icon" aria-label="关闭镜头列表" type="button" onClick={onClose}><X /></Button>
+        </div>
       </div>
       <ScrollArea className="shot-list-scroll">
         <div className="shot-list">
@@ -47,7 +52,7 @@ export function ShotRail({
         </div>
       </ScrollArea>
       <div className="rail-summary">
-        <span>真实镜头 / 总时长</span>
+        <span>总时长</span>
         <Badge variant="secondary">{project.shots.length} / {formatDuration(totalDuration)}</Badge>
       </div>
     </aside>

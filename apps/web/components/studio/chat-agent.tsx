@@ -646,7 +646,7 @@ export function ChatAgent({
       <header className="chat-agent__header">
         <div className="chat-agent__identity">
           <span className="chat-agent__mark"><Bot /></span>
-          <div><span>CHAT AGENT / CONTROLLED CANVAS</span><h2>创作搭档</h2></div>
+          <div><span>CHAT AGENT</span><h2>创作 Agent</h2></div>
         </div>
         <div className="chat-agent__header-actions">
           <Button type="button" variant="ghost" size="icon" onClick={() => setSkillOpen(true)} aria-label="打开 Skill 库"><Sparkles /></Button>
@@ -681,7 +681,7 @@ export function ChatAgent({
             <div className="chat-agent__empty">
               <Sparkles />
               <h3>从当前镜头开始</h3>
-              <p>我可以读取项目和画布，也可以把明确的修改请求编译成受控计划；只有你批准后，计划才会应用。</p>
+              <p>告诉我你想改什么。我会先给出计划，确认后再更新画布。</p>
             </div>
           ) : messages.map((message) => {
             const messageInterrupt = interruptFromMessage(message);
@@ -768,7 +768,7 @@ export function ChatAgent({
           <Button type="button" variant="ghost" size="sm" onClick={() => { setFeedbackOpen((open) => !open); setFeedbackSent(false); }}>
             <MessageSquareWarning />{feedbackSent ? "反馈已提交" : "报告问题"}
           </Button>
-          <span>帮助我们改进 Agent</span>
+          <span>你的反馈会帮助我们改进</span>
         </div>
         {feedbackOpen ? (
           <section className="chat-agent__feedback" aria-label="报告 Agent 问题">
@@ -797,7 +797,7 @@ export function ChatAgent({
             onMentionsChange={setDraftMentions}
             onChange={setDraft}
             onKeyDown={handleKeyDown}
-            placeholder={node ? `询问关于「${node.data.title}」的问题…` : "告诉 Agent 你想完成什么…"}
+            placeholder={node ? `修改「${node.data.title}」…` : "告诉 Agent 下一步…"}
             disabled={!thread || canvasSyncing || Boolean(activeRun || pendingApproval || pendingInterrupt)}
             rows={3}
           />
