@@ -92,7 +92,7 @@ def test_local_h3_video_provider_submits_polls_and_returns_video_url() -> None:
         "preset": "custom",
         "seconds": 1.0,
         "steps": 4,
-        "output_name": "libtv-generation-1",
+        "output_name": "ai-video-studio-generation-1",
         "width": 256,
         "height": 256,
         "seed": 42,

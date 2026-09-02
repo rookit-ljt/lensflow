@@ -1,5 +1,5 @@
 {
-  "name": "@libtv/workflow-schema",
+  "name": "@ai-video-studio/workflow-schema",
   "version": "0.1.0",
   "private": true,
   "type": "module",

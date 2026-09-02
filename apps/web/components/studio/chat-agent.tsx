@@ -9,7 +9,6 @@ import {
   GitBranch,
   LoaderCircle,
   MessageSquarePlus,
-  MessageSquareWarning,
   Palette,
   Pencil,
   Play,
@@ -269,9 +268,6 @@ export function ChatAgent({
   const [decisionLoading, setDecisionLoading] = useState<"approve" | "reject" | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [feedbackOpen, setFeedbackOpen] = useState(false);
-  const [feedbackDraft, setFeedbackDraft] = useState("");
-  const [feedbackSent, setFeedbackSent] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
 
@@ -508,33 +504,6 @@ export function ChatAgent({
     }
   }, [activeRun]);
 
-  const submitFeedback = useCallback(async () => {
-    const message = feedbackDraft.trim();
-    if (!message || feedbackSent) return;
-    setError(null);
-    try {
-      await api.submitFeedback({
-        category: "agent",
-        message,
-        project_id: project.id,
-        shot_id: shot.id,
-        generation_id: generation?.id,
-        context: {
-          node_id: node?.id ?? null,
-          canvas_revision: canvasRevision ?? null,
-          run_id: activeRun?.id ?? null,
-          run_status: activeRun?.status ?? null,
-          run_step: activeRun?.current_step ?? null,
-          skill_id: selectedSkill?.id ?? null,
-        },
-      });
-      setFeedbackSent(true);
-      setFeedbackDraft("");
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "问题反馈提交失败");
-    }
-  }, [activeRun, canvasRevision, feedbackDraft, feedbackSent, generation?.id, node?.id, project.id, selectedSkill?.id, shot.id]);
-
   const quickPrompts = useMemo(() => [
     node ? "分析当前节点并给出优化建议" : "分析当前镜头的创作方向",
     "为当前镜头生成角色及场景设计",
@@ -763,30 +732,6 @@ export function ChatAgent({
             </span>
             <button type="button" onClick={() => setSelectedSkill(null)} aria-label={`停用 ${selectedSkill.name}`}><X /></button>
           </div>
-        ) : null}
-        <div className="chat-agent__feedback-bar">
-          <Button type="button" variant="ghost" size="sm" onClick={() => { setFeedbackOpen((open) => !open); setFeedbackSent(false); }}>
-            <MessageSquareWarning />{feedbackSent ? "反馈已提交" : "报告问题"}
-          </Button>
-          <span>你的反馈会帮助我们改进</span>
-        </div>
-        {feedbackOpen ? (
-          <section className="chat-agent__feedback" aria-label="报告 Agent 问题">
-            <textarea
-              value={feedbackDraft}
-              onChange={(event) => setFeedbackDraft(event.target.value)}
-              placeholder="描述哪里不符合预期（不会自动附带你的完整提示词）"
-              rows={3}
-              maxLength={4000}
-              disabled={feedbackSent}
-            />
-            <div>
-              <span>{feedbackDraft.length}/4000</span>
-              <Button type="button" size="sm" onClick={() => void submitFeedback()} disabled={feedbackSent || !feedbackDraft.trim()}>
-                {feedbackSent ? <Check /> : <ArrowUp />} {feedbackSent ? "已提交" : "发送反馈"}
-              </Button>
-            </div>
-          </section>
         ) : null}
         <div className="chat-agent__composer">
           <MentionPicker

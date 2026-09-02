@@ -1,4 +1,4 @@
-# LibTV Web Platform
+# AI Video Studio Web Platform
 
 面向浏览器的项目制 AI 视频创作平台。MVP 使用 Product Workflow、FastAPI、Celery/RabbitMQ 和可插拔模型 Provider，不依赖 ComfyUI 核心链路。
 
@@ -24,6 +24,8 @@ outputs/                  架构设计文档
 
 Web 默认运行在 `http://localhost:3000`，API 文档位于 `http://localhost:8000/docs`。
 
+默认是本地单用户模式，启动后无需注册或登录即可进入工作区。系统会在新数据库中创建一个本地用户来隔离项目数据。若部署到公网，请在 `.env` 设置 `AUTH_REQUIRED=true`，并配置 HTTPS、安全 Cookie 和可信 CORS 来源。
+
 API 必须通过上述脚本启动。脚本固定使用 `apps/api/.venv`，避免调用到 Conda 或系统全局安装的 `uvicorn`。
 
 Compose 会从 `.env` 读取 PostgreSQL 和 RabbitMQ 凭据；`.env.example` 中的值仅用于本地开发，生产部署必须替换为随机强密码。
@@ -32,7 +34,7 @@ Compose 会从 `.env` 读取 PostgreSQL 和 RabbitMQ 凭据；`.env.example` 中
 
 - 已完成仓库和领域模型骨架。
 - Web 工作台从 FastAPI 读取项目和镜头；示例项目、新增镜头与工作流编辑均写入数据库。
-- 支持邮箱密码注册、登录和退出；会话使用 HttpOnly Cookie，项目、镜头、工作流、生成记录、Agent 对话和新上传素材按用户隔离。
+- 支持可选的邮箱密码注册、登录和退出；会话使用 HttpOnly Cookie，项目、镜头、工作流、生成记录、Agent 对话和新上传素材按用户隔离。
 - 升级已有数据库后，第一个注册账号会自动接管此前没有所属用户的本地项目，避免历史数据丢失。
 - API 提供健康检查，以及项目、镜头、工作流的创建、查询和更新接口。
 - 每个镜头拥有独立的持久化工作流；节点、连线、位置和视口都会在编辑后自动保存，刷新页面可以恢复。
@@ -159,7 +161,7 @@ AGENT_HISTORY_MESSAGES=20
 分别回退到 `QWEN_TEXT_MODEL` 或 `TEXT_MODEL`。Agent 的审批记录、CanvasPatch 和事件协议均使用
 可序列化的稳定结构，后续可映射到 LangGraph Checkpointer、`interrupt()` 与 `resume`。
 
-架构基线见 [outputs/libtv-web-architecture.md](outputs/libtv-web-architecture.md)。
+架构基线见 [outputs/ai-video-studio-web-architecture.md](outputs/ai-video-studio-web-architecture.md)。
 
 ## 安全与隐私
 
@@ -170,4 +172,4 @@ AGENT_HISTORY_MESSAGES=20
 
 ## 开源范围
 
-仓库中的 LibTV 应用代码以 Apache-2.0 发布；第三方依赖、模型服务、外部 Skill 和示例素材仍受其各自许可证与服务条款约束。提交新的 Provider、Skill 或素材时，请在 Pull Request 中提供来源、许可证和再分发依据。
+仓库中的 AI Video Studio 应用代码以 Apache-2.0 发布；第三方依赖、模型服务、外部 Skill 和示例素材仍受其各自许可证与服务条款约束。提交新的 Provider、Skill 或素材时，请在 Pull Request 中提供来源、许可证和再分发依据。

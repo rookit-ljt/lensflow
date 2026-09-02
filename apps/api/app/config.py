@@ -7,19 +7,20 @@ API_ROOT = Path(__file__).resolve().parents[1]
 
 
 class Settings(BaseSettings):
-    app_name: str = "LibTV API"
+    app_name: str = "AI Video Studio API"
     environment: str = "development"
     # Runtime settings are intentionally limited to local development. In a
     # deployed environment configuration should come from secrets management.
     runtime_settings_enabled: bool = True
-    database_url: str = f"sqlite:///{API_ROOT / 'libtv.db'}"
+    database_url: str = f"sqlite:///{API_ROOT / 'ai-video-studio.db'}"
     cors_origins: list[str] = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
         "http://localhost:3001",
         "http://127.0.0.1:3001",
     ]
-    auth_cookie_name: str = "libtv_session"
+    auth_cookie_name: str = "ai-video-studio_session"
+    auth_required: bool = False
     auth_session_days: int = 30
     auth_cookie_secure: bool = False
     google_client_id: str = ""
@@ -58,7 +59,7 @@ class Settings(BaseSettings):
     agent_max_tokens: int = 2800
     agent_history_messages: int = 20
     agent_system_prompt: str = (
-        "你是 LibTV 画布中的影视创作 Agent。你会收到真实的项目、镜头、节点、连线和生成任务上下文。"
+        "你是 AI Video Studio 画布中的影视创作 Agent。你会收到真实的项目、镜头、节点、连线和生成任务上下文。"
         "请用简洁、可执行的中文回答，优先引用当前镜头和节点中的具体信息。"
         "你不能直接修改画布或启动付费生成；明确的画布操作请求会进入独立的受控计划流程，"
         "生成 CanvasPatch 并等待用户批准后才执行。普通对话中禁止自行编写 CanvasPatch、禁止声称已经提交审批，"

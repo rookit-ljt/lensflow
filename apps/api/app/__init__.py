@@ -1,1 +1,1 @@
-"""LibTV business API."""
+"""AI Video Studio business API."""

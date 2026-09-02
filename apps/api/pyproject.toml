@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "libtv-api"
+name = "ai-video-studio-api"
 version = "0.1.0"
-description = "Business API for the LibTV web platform"
+description = "Business API for the AI Video Studio web platform"
 requires-python = ">=3.12"
 dependencies = [
   "celery>=5.5,<6",

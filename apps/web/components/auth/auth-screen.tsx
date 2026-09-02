@@ -111,7 +111,7 @@ export function AuthScreen({ initialError, onAuthenticated }: AuthScreenProps) {
 
   return (
     <main className="auth-shell auth-shell--minimal">
-      <header className="auth-minimal-header"><strong>LibTV</strong></header>
+      <header className="auth-minimal-header"><strong>AI Video Studio</strong></header>
       <section className="auth-panel auth-panel--minimal">
         <div className="auth-card auth-card--minimal">
           <div className="auth-card__heading">

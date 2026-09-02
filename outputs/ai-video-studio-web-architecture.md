@@ -1,4 +1,4 @@
-# LibTV Web AI 创作平台架构设计
+# AI Video Studio Web AI 创作平台架构设计
 
 版本：1.0  
 日期：2026-08-17  
@@ -18,7 +18,7 @@
 ### 2.1 已实现
 
 - 项目和镜头的读取、创建与编辑。
-- 邮箱密码注册、登录、退出和持久会话；密码使用带随机盐的 scrypt 保存，会话 Token 仅以 SHA-256 摘要落库并通过 HttpOnly Cookie 传递。
+- 本地默认免登录并使用稳定的单用户身份；部署开启 `AUTH_REQUIRED=true` 后，支持邮箱密码注册、登录、退出和持久会话。密码使用带随机盐的 scrypt 保存，会话 Token 仅以 SHA-256 摘要落库并通过 HttpOnly Cookie 传递。
 - 项目所有权隔离覆盖镜头、工作流、Generation、Agent Thread/Run/Event 和上传素材；越权访问统一返回 404。
 - 每个镜头一份独立 Product Workflow。
 - 工作流节点、连线、位置和视口持久化。
@@ -718,7 +718,7 @@ GET   /api/auth/me
 POST  /api/auth/logout
 ```
 
-除 `/health` 和注册、登录接口外，业务 API 均要求有效的 `libtv_session` Cookie。
+本地免登录模式下，业务 API 自动使用本地用户；`AUTH_REQUIRED=true` 时，除 `/health` 和注册、登录接口外，业务 API 均要求有效的 `ai-video-studio_session` Cookie。
 
 ### 系统
 
@@ -964,7 +964,7 @@ ComfyUI Workflow 不直接暴露给普通用户，也不替代当前 Product Wor
 5. 直接上游节点的文本和图片可作为生成上下文。
 6. 千问图片在存在参考图时可自动切换到支持编辑的模型。
 7. 生成期间节点锁定，完成或失败后画布展示对应结果。
-8. LibTV API 不直接加载模型且不依赖 ComfyUI；本地 H3 服务独立使用本机 GPU/Metal 资源。
+8. AI Video Studio API 不直接加载模型且不依赖 ComfyUI；本地 H3 服务独立使用本机 GPU/Metal 资源。
 9. 项目资产可被用户或审批后的 Agent 绑定为图片参考、视频首帧和尾帧。
 
 以下不属于当前验收范围：云端视频、图生视频、音频、整图自动执行、专业时间轴、永久对象存储、资产版本和生产级多租户。

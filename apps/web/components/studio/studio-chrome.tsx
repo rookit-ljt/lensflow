@@ -1,7 +1,6 @@
 import {
   Bot,
   Boxes,
-  Download,
   FolderArchive,
   LayoutDashboard,
   LogOut,
@@ -31,7 +30,7 @@ import {
 } from "@/components/ui/tooltip";
 import { formatDuration, syncLabel } from "@/components/studio/studio-config";
 import type { SyncState } from "@/components/studio/studio-types";
-import { projectExportUrl, type CurrentUser, type Project, type Shot } from "@/lib/api";
+import { type CurrentUser, type Project, type Shot } from "@/lib/api";
 
 type StudioHeaderProps = {
   currentUser: CurrentUser;
@@ -64,7 +63,7 @@ export function StudioHeader({
 }: StudioHeaderProps) {
   return (
     <header className="studio-header">
-      <div className="brand-lockup" aria-label="Framefield">
+      <div className="brand-lockup" aria-label="AI Video Studio">
         <Tooltip>
           <TooltipTrigger render={<Button className="dashboard-return" type="button" variant="ghost" size="icon-sm" onClick={onBackToDashboard} aria-label="返回项目首页" />}>
             <LayoutDashboard />
@@ -73,7 +72,7 @@ export function StudioHeader({
         </Tooltip>
         <span className="brand-mark">S</span>
         <div className="story-lockup">
-          <span className="brand-name">{project?.name ?? "Framefield"}</span>
+          <span className="brand-name">{project?.name ?? "AI Video Studio"}</span>
           {project && selectedShot ? (
             <Select value={selectedShot.id} onValueChange={(value) => value && onSelectShot(String(value))}>
               <SelectTrigger size="sm" className="header-shot-switch" aria-label="切换镜头">
@@ -116,16 +115,6 @@ export function StudioHeader({
           </TooltipTrigger>
           <TooltipContent>重新读取项目与工作流</TooltipContent>
         </Tooltip>
-        {project ? (
-          <Tooltip>
-            <TooltipTrigger
-              render={<a className="header-icon-button header-export-link header-secondary-action" href={projectExportUrl(project.id)} download={`libtv-project-${project.id}.json`} aria-label="导出项目备份" />}
-            >
-              <Download />
-            </TooltipTrigger>
-            <TooltipContent>导出项目备份（JSON）</TooltipContent>
-          </Tooltip>
-        ) : null}
         <Tooltip>
           <TooltipTrigger render={<Button className="header-icon-button" type="button" variant="outline" size="icon" onClick={() => onSettingsOpenChange(true)} aria-label="模型设置" />}>
             <Settings2 />
@@ -139,12 +128,12 @@ export function StudioHeader({
           <span>{currentUser.display_name.slice(0, 1).toUpperCase()}</span>
           <div><strong>{currentUser.display_name}</strong><small>{currentUser.email}</small></div>
         </div>
-        <Tooltip>
-          <TooltipTrigger render={<Button className="header-icon-button" type="button" variant="ghost" size="icon" aria-label="退出登录" onClick={() => void onLogout()} />}>
-            <LogOut />
-          </TooltipTrigger>
-          <TooltipContent>退出登录</TooltipContent>
-        </Tooltip>
+          {currentUser.email !== "local@localhost.invalid" ? <Tooltip>
+            <TooltipTrigger render={<Button className="header-icon-button" type="button" variant="ghost" size="icon" aria-label="退出登录" onClick={() => void onLogout()} />}>
+              <LogOut />
+            </TooltipTrigger>
+            <TooltipContent>退出登录</TooltipContent>
+          </Tooltip> : null}
       </div>
     </header>
   );

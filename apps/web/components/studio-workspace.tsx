@@ -967,7 +967,7 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
           steps: numberConfig(selectedNode?.data.config ?? {}, "steps", 4),
           seed: numberConfig(selectedNode?.data.config ?? {}, "seed", 42),
           camera_motion: textConfig(selectedNode?.data.config ?? {}, "camera_motion", "自动"),
-          output_name: `libtv-${selectedNode?.id.slice(0, 8) ?? "video"}`,
+          output_name: `ai-video-studio-${selectedNode?.id.slice(0, 8) ?? "video"}`,
           video_reference_mode: referenceMode,
           first_frame_node_id: referenceMode === "keyframe" ? firstFrameNodeId : "",
           last_frame_node_id: referenceMode === "keyframe" ? lastFrameNodeId : "",

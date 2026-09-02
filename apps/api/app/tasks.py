@@ -22,7 +22,7 @@ from .providers import (
 from .providers.base import GenerationRequest
 
 
-@celery_app.task(name="libtv.generate_shot")
+@celery_app.task(name="ai-video-studio.generate_shot")
 def generate_shot(generation_id: str) -> None:
     with SessionLocal() as session:
         generation = session.get(Generation, uuid.UUID(generation_id))
@@ -115,7 +115,7 @@ def generate_shot(generation_id: str) -> None:
                     "source_generation_id": generation.id,
                     "kind": generation.kind,
                     "role": "generation",
-                    "filename": f"libtv-{generation.kind}-{generation.id.hex[:8]}",
+                    "filename": f"ai-video-studio-{generation.kind}-{generation.id.hex[:8]}",
                     "content_type": "video/mp4" if generation.kind == "video" else "image/png",
                     "size": 0,
                     "url": result.output_url,

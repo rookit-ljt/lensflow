@@ -17,7 +17,7 @@ def extract_last_video_frame(source_url: str) -> bytes:
     if ffmpeg is None:
         raise RuntimeError("服务器未安装 FFmpeg，无法截取视频末帧")
 
-    with TemporaryDirectory(prefix="libtv-last-frame-") as temp_dir:
+    with TemporaryDirectory(prefix="ai-video-studio-last-frame-") as temp_dir:
         video_path = Path(temp_dir) / "source-video"
         frame_path = Path(temp_dir) / "last-frame.png"
         _materialize_video(source_url, video_path)

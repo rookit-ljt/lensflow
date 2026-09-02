@@ -70,7 +70,7 @@ SKILLS: tuple[dict[str, Any], ...] = (
         "description": "把角色图、场景图和风格图整理为 H3 Ref2VA 可执行的引用定义。",
         "category": "通用",
         "tags": ["H3", "Ref2VA", "参考图"],
-        "source": "Framefield 内置流程（参考 DeerFlow Skills 机制）",
+        "source": "内置创作流程（参考 DeerFlow Skills 机制）",
         "source_url": "https://github.com/bytedance/deer-flow/tree/main/skills/public",
         "stars": None,
         "license": "内部实现",

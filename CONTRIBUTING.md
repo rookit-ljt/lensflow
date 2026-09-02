@@ -1,6 +1,6 @@
 # 贡献指南
 
-感谢参与 LibTV。提交代码前，请先阅读 `README.md`、`SECURITY.md` 和 `outputs/` 下的架构文档。
+感谢参与 AI Video Studio。提交代码前，请先阅读 `README.md`、`SECURITY.md` 和 `outputs/` 下的架构文档。
 
 ## 本地开发
 

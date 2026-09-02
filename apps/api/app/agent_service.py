@@ -1021,7 +1021,7 @@ def _agent_generation_parameters(
         "steps": int(_number_value(config.get("steps"), 4)),
         "seed": int(_number_value(config.get("seed"), 42)),
         "camera_motion": str(config.get("camera_motion") or "自动"),
-        "output_name": f"libtv-{str(node_id)[:8]}",
+        "output_name": f"ai-video-studio-{str(node_id)[:8]}",
         "video_reference_mode": str(config.get("video_reference_mode") or "text"),
         "first_frame_node_id": str(config.get("first_frame_node_id") or ""),
         "last_frame_node_id": str(config.get("last_frame_node_id") or ""),

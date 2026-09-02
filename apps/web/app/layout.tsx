@@ -6,7 +6,7 @@ import "./globals.css";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
 export const metadata: Metadata = {
-  title: "Framefield — AI video workspace",
+  title: "AI Video Studio",
   description: "Project-based AI video creation workspace",
 };
 

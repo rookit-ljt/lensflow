@@ -14,7 +14,19 @@ def _credentials(prefix: str) -> dict[str, str]:
     }
 
 
-def test_authentication_session_lifecycle() -> None:
+def test_local_mode_provides_stable_guest_identity(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "auth_required", False)
+    with TestClient(app) as client:
+        first = client.get("/api/auth/me")
+        second = client.get("/api/auth/me")
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert first.json()["id"] == second.json()["id"]
+        assert first.json()["email"] == "local@localhost.invalid"
+
+
+def test_authentication_session_lifecycle(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "auth_required", True)
     credentials = _credentials("session")
     with TestClient(app) as client:
         assert client.get("/api/projects").status_code == 401

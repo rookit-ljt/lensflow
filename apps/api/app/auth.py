@@ -103,6 +103,8 @@ def require_user(request: Request, session: DatabaseSession) -> User:
     settings = get_settings()
     token = request.cookies.get(settings.auth_cookie_name)
     if not token:
+        if not settings.auth_required:
+            return get_or_create_local_user(session)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="请先登录")
     auth_session = session.scalar(
         select(AuthSession)
@@ -126,6 +128,22 @@ def require_user(request: Request, session: DatabaseSession) -> User:
         auth_session.last_seen_at = now
         session.commit()
     return auth_session.user
+
+
+def get_or_create_local_user(session: Session) -> User:
+    """Return the stable local owner used by the single-user distribution."""
+    local_email = "local@localhost.invalid"
+    user = session.scalar(select(User).where(User.email == local_email))
+    if user is None:
+        user = User(
+            email=local_email,
+            display_name="本地用户",
+            password_hash="local-only",
+        )
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+    return user
 
 
 CurrentUser = Annotated[User, Depends(require_user)]

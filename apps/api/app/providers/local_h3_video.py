@@ -78,7 +78,7 @@ class LocalH3VideoProvider:
         payload: dict[str, Any],
         request: GenerationRequest,
     ) -> GenerationResult:
-        with TemporaryDirectory(prefix=f"libtv-h3-{request.generation_id[:8]}-") as temp_dir:
+        with TemporaryDirectory(prefix=f"ai-video-studio-h3-{request.generation_id[:8]}-") as temp_dir:
             payload.update(self._reference_payload(client, request, Path(temp_dir)))
             return self._submit_and_poll(client, base_url, payload, request)
 
@@ -289,7 +289,7 @@ class LocalH3VideoProvider:
     def _output_name(value: object, generation_id: str) -> str:
         if isinstance(value, str) and value.strip():
             return value.strip()[:80]
-        return f"libtv-{generation_id[:12]}"
+        return f"ai-video-studio-{generation_id[:12]}"
 
     @staticmethod
     def _raise_for_status(response: httpx.Response, message: str) -> None:

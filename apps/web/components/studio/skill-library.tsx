@@ -3,12 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Check,
-  ChevronDown,
   ExternalLink,
-  Heart,
-  Plus,
   Search,
-  Sparkles,
   Wrench,
   X,
 } from "lucide-react";
@@ -16,7 +12,6 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import type { AgentSkill } from "@/lib/api";
 
 export type ChatSkill = AgentSkill & {
@@ -34,8 +29,8 @@ type SkillLibraryProps = {
 
 type SkillTab = "通用" | "收藏" | "我的";
 
-const customStorageKey = "libtv.chat-skills.v1";
-const favoriteStorageKey = "libtv.chat-skill-favorites.v1";
+const customStorageKey = "ai-video-studio.chat-skills.v1";
+const favoriteStorageKey = "ai-video-studio.chat-skill-favorites.v1";
 
 function readStorage<T>(key: string, fallback: T): T {
   try {
@@ -124,28 +119,16 @@ export function SkillLibrary({ open, skills, selectedSkillId, onClose, onSelect 
       <header className="skill-library__header">
         <div><span className="skill-library__eyebrow">AGENT</span><h2>Skill</h2></div>
         <div className="skill-library__header-actions">
-          <Button type="button" variant="outline" onClick={() => setShowCreate((current) => !current)}><Plus />创建 <ChevronDown className={showCreate ? "is-open" : undefined} /></Button>
-          <Button type="button" variant="outline" onClick={() => setTab("通用")} aria-label="显示全部 Skill">全部</Button>
           <Button type="button" variant="ghost" size="icon-sm" onClick={onClose} aria-label="关闭"><X /></Button>
         </div>
       </header>
 
       <div className="skill-library__toolbar">
         <nav className="skill-library__tabs" aria-label="Skill 分类">
-          {(["通用", "收藏", "我的"] as SkillTab[]).map((item) => <button key={item} type="button" className={tab === item ? "is-active" : undefined} onClick={() => setTab(item)}>{item}</button>)}
+          <button type="button" className="is-active">推荐</button>
         </nav>
         <label className="skill-library__search"><Search /><Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索 Skill" /></label>
       </div>
-
-      {showCreate ? (
-        <div className="skill-library__create">
-          <div className="skill-library__create-heading"><Sparkles /><strong>创建我的 Skill</strong><span>写清楚 Agent 应该如何工作</span></div>
-          <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="名称，例如：古典武侠广告导演" />
-          <Input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="一句话描述这个 Skill" />
-          <Textarea value={instruction} onChange={(event) => setInstruction(event.target.value)} placeholder="输入创作规则、检查清单和输出格式…" rows={3} />
-          <div className="skill-library__create-actions"><Button type="button" variant="ghost" onClick={() => setShowCreate(false)}>取消</Button><Button type="button" onClick={createSkill} disabled={!name.trim() || !instruction.trim()}><Check />保存 Skill</Button></div>
-        </div>
-      ) : null}
 
       <div className="skill-library__list">
         {visibleSkills.length ? visibleSkills.map((skill) => {
@@ -160,7 +143,6 @@ export function SkillLibrary({ open, skills, selectedSkillId, onClose, onSelect 
               <div className="skill-library__item-actions">
                 {selected ? <Badge className="skill-library__selected-badge"><Check />已启用</Badge> : null}
                 {skill.stars ? <Badge variant="outline">★ {skill.stars}</Badge> : null}
-                <button type="button" className={favorite ? "is-favorite" : undefined} onClick={() => toggleFavorite(skill)} aria-label={favorite ? "取消收藏" : "收藏"}><Heart /></button>
                 {skill.source_url ? <a href={skill.source_url} target="_blank" rel="noreferrer" aria-label="查看来源"><ExternalLink /></a> : null}
               </div>
             </article>

@@ -145,7 +145,7 @@ QWEN_IMAGE_MODELS = (
 app = FastAPI(
     title=settings.app_name,
     version="0.1.0",
-    description="Project, shot and workflow control plane for LibTV.",
+    description="Project, shot and workflow control plane for AI Video Studio.",
     lifespan=lifespan,
 )
 app.add_middleware(
@@ -159,7 +159,7 @@ app.add_middleware(
 
 @app.get("/health", response_model=HealthResponse, tags=["system"])
 def health() -> HealthResponse:
-    return HealthResponse(status="ok", service="libtv-api", version="0.1.0")
+    return HealthResponse(status="ok", service="ai-video-studio-api", version="0.1.0")
 
 
 def _owned_project(session: Session, user: User, project_id: uuid.UUID) -> Project:
@@ -896,7 +896,7 @@ def export_project(
         return value.isoformat() if value else None
 
     export = {
-        "format": "libtv-project-backup",
+        "format": "ai-video-studio-project-backup",
         "version": "1.0",
         "exported_at": datetime.now(UTC).isoformat(),
         "project": {
@@ -983,7 +983,7 @@ def export_project(
         "note": "资产 URL 指向当前部署；此 JSON 不包含二进制文件，请同时备份 uploads 目录或对象存储。",
     }
     content = json.dumps(export, ensure_ascii=False, indent=2, default=str)
-    filename = f"libtv-project-{project.id.hex[:8]}.json"
+    filename = f"ai-video-studio-project-{project.id.hex[:8]}.json"
     return Response(
         content=content,
         media_type="application/json",
@@ -1728,7 +1728,7 @@ async def download_generation(
 
     source_url = generation.output_url
     default_media_type = "image/png" if generation.kind == "image" else "video/mp4"
-    filename_prefix = f"libtv-{generation.kind}-{generation.id.hex[:8]}"
+    filename_prefix = f"ai-video-studio-{generation.kind}-{generation.id.hex[:8]}"
 
     if source_url.startswith("data:"):
         header, separator, payload = source_url.partition(",")
