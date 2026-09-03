@@ -28,6 +28,7 @@
 - React Flow 节点拖拽、连接、删除、缩放、MiniMap 和自定义动画连线。
 - 节点选中时显示底部创作面板，生成期间锁定节点并展示 Loading。
 - 生成记录持久化及前端状态轮询。
+- 提供镜头级运行接口，按工作流拓扑顺序执行已配置的生成节点；当前本地实现依赖 eager 任务模式，异步 Worker 链式调度仍待补齐。
 - 连线节点内容作为下游生成上下文。
 - OpenAI-compatible、千问文本模型调用。
 - OpenAI-compatible、Seedream、Gemini、千问图片模型调用。
