@@ -491,10 +491,14 @@ def execute_agent_run(run_id: str) -> None:
                 )
             )
             ordered_messages = list(reversed(recent_messages))
+            # A resumed run can contain both the original user request and a
+            # later decision message. Always treat the latest message for this
+            # run as the current input; moving the original request to the end
+            # would re-trigger the same interrupt forever.
             current_user_message = next(
                 (
                     message
-                    for message in ordered_messages
+                    for message in reversed(ordered_messages)
                     if message.run_id == run.id and message.role == AgentMessageRole.USER
                 ),
                 None,
