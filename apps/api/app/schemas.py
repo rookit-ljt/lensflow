@@ -267,11 +267,15 @@ class RuntimeSettingsRead(BaseModel):
     qwen_image_model: str
     qwen_image_base_url: str
     qwen_image_configured: bool
+    local_video_model: str
+    local_video_base_url: str
+    local_video_request_timeout_seconds: float
+    local_video_configured: bool
 
 
 class RuntimeSettingsUpdate(BaseModel):
-    provider: Literal["qwen", "openai_compatible"]
-    kind: Literal["text", "image"] = "text"
+    provider: Literal["qwen", "openai_compatible", "local_h3"]
+    kind: Literal["text", "image", "video"] = "text"
     api_key: str = Field(default="", max_length=512)
     model: str = Field(min_length=1, max_length=160)
     base_url: str | None = Field(default=None, max_length=500)

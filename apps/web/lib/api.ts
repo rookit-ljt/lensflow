@@ -171,11 +171,15 @@ export interface RuntimeSettings {
   qwen_image_model: string;
   qwen_image_base_url: string;
   qwen_image_configured: boolean;
+  local_video_model: string;
+  local_video_base_url: string;
+  local_video_request_timeout_seconds: number;
+  local_video_configured: boolean;
 }
 
 export interface RuntimeSettingsPayload {
-  provider: "qwen" | "openai_compatible";
-  kind: "text" | "image";
+  provider: "qwen" | "openai_compatible" | "local_h3";
+  kind: "text" | "image" | "video";
   api_key?: string;
   model: string;
   base_url?: string;

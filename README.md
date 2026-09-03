@@ -142,7 +142,7 @@ TEXT_MODEL=gpt-4.1-mini
 
 ### 工作台快速配置（本地/内测）
 
-开发环境启动后，点击工作台顶部的齿轮按钮“模型设置”，即可填写文本或图片模型的服务商、模型名、Base URL 和 API Key。文本模型可以点击“测试连接”，图片模型只保存配置，避免测试动作产生计费请求。Key 不会回显，也不会写入项目数据库；设置页只在 `ENVIRONMENT=development` 且 `RUNTIME_SETTINGS_ENABLED=true` 时开放。
+开发环境启动后，点击工作台顶部的齿轮按钮“模型设置”，即可填写文本、图片或本地视频模型的服务商、模型名和 Base URL。文本模型可以点击“测试连接”，图片模型只保存配置，避免测试动作产生计费请求；视频模型用于配置本地 H3 服务地址和模型名。Key 不会回显，也不会写入项目数据库；设置页只在 `ENVIRONMENT=development` 且 `RUNTIME_SETTINGS_ENABLED=true` 时开放。
 
 设置会写入根目录的 `.env` 并立即更新当前 API 进程。若使用独立 Celery Worker，请在保存后重启 Worker 使其读取最新配置。生产部署应关闭运行时设置，并改用平台 Secret 或环境变量注入。
 

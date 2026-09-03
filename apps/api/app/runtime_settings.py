@@ -38,6 +38,10 @@ def settings_view(settings: Settings) -> dict[str, object]:
         "qwen_image_model": settings.qwen_image_model,
         "qwen_image_base_url": settings.qwen_image_base_url,
         "qwen_image_configured": bool(settings.qwen_api_key.strip() and settings.qwen_image_model.strip()),
+        "local_video_model": settings.local_video_model,
+        "local_video_base_url": settings.local_video_base_url,
+        "local_video_request_timeout_seconds": settings.local_video_request_timeout_seconds,
+        "local_video_configured": bool(settings.local_video_base_url.strip() and settings.local_video_model.strip()),
     }
 
 
@@ -74,10 +78,20 @@ def _write_env_values(values: dict[str, str]) -> None:
     ROOT_ENV.write_text("\n".join(output).rstrip() + "\n", encoding="utf-8")
 
 
-def apply_settings(settings: Settings, *, provider: Literal["qwen", "openai_compatible"], kind: Literal["text", "image"], api_key: str, model: str, base_url: str | None, apply_to_agent: bool) -> None:
+def apply_settings(settings: Settings, *, provider: Literal["qwen", "openai_compatible", "local_h3"], kind: Literal["text", "image", "video"], api_key: str, model: str, base_url: str | None, apply_to_agent: bool) -> None:
     api_key = _clean(api_key)
     model = _clean(model)
     base_url = _clean(base_url)
+    if provider == "local_h3" and kind == "video":
+        if not model:
+            raise ValueError("请输入视频模型名称")
+        settings.local_video_model = model
+        settings.local_video_base_url = base_url or settings.local_video_base_url
+        _write_env_values({
+            "LOCAL_VIDEO_MODEL": settings.local_video_model,
+            "LOCAL_VIDEO_BASE_URL": settings.local_video_base_url,
+        })
+        return
     if not api_key:
         if provider == "qwen":
             api_key = settings.qwen_api_key
@@ -136,8 +150,8 @@ def apply_settings(settings: Settings, *, provider: Literal["qwen", "openai_comp
 
 
 class RuntimeSettingsPayload(BaseModel):
-    provider: Literal["qwen", "openai_compatible"]
-    kind: Literal["text", "image"] = "text"
+    provider: Literal["qwen", "openai_compatible", "local_h3"]
+    kind: Literal["text", "image", "video"] = "text"
     api_key: str = ""
     model: str
     base_url: str | None = None
