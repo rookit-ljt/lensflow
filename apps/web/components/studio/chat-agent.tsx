@@ -163,6 +163,7 @@ type DecisionCardProps = {
   interrupt: AgentInterrupt;
   active: boolean;
   selectedOptionId: string | null;
+  selectedOptionIds: string[];
   loading: boolean;
   onSelect: (optionId: string) => void;
   onConfirm: () => void;
@@ -172,12 +173,17 @@ function DecisionCard({
   interrupt,
   active,
   selectedOptionId,
+  selectedOptionIds,
   loading,
   onSelect,
   onConfirm,
 }: DecisionCardProps) {
   const options = interrupt.payload.options ?? [];
   const confirmedOptionId = interrupt.response?.option_id;
+  const multiSelect = interrupt.kind === "multi_select" || interrupt.payload.selection_mode === "multi";
+  const confirmedOptionIds = Array.isArray(interrupt.response?.option_ids)
+    ? interrupt.response?.option_ids.map(String)
+    : [];
   const currentOptionId = active ? selectedOptionId : confirmedOptionId;
   const generationConfirmation = interrupt.payload.presentation === "generation_confirmation";
   return (
@@ -187,14 +193,16 @@ function DecisionCard({
         <Badge variant="outline">{active ? "等待选择" : "已确认"}</Badge>
       </header>
       <p>{interrupt.description}</p>
-      <div className="chat-agent__decision-grid" role="radiogroup" aria-label={interrupt.title}>
+      <div className="chat-agent__decision-grid" role={multiSelect ? "group" : "radiogroup"} aria-label={interrupt.title}>
         {options.map((option) => {
-          const selected = currentOptionId === option.id;
+          const selected = multiSelect
+            ? (active ? selectedOptionIds : confirmedOptionIds).includes(option.id)
+            : currentOptionId === option.id;
           return (
             <button
               key={option.id}
               type="button"
-              role="radio"
+              role={multiSelect ? "checkbox" : "radio"}
               aria-checked={selected}
               className={`chat-agent__decision-option tone-${option.tone ?? "slate"} ${selected ? "is-selected" : ""}`}
               disabled={!active || loading}
@@ -209,7 +217,7 @@ function DecisionCard({
         })}
       </div>
       {active ? (
-        <Button type="button" onClick={onConfirm} disabled={!selectedOptionId || loading}>
+        <Button type="button" onClick={onConfirm} disabled={multiSelect ? selectedOptionIds.length === 0 || loading : !selectedOptionId || loading}>
           {loading ? <LoaderCircle className="animate-spin" /> : <Check />}
           {String(interrupt.payload.confirm_label ?? "确认选择")}
         </Button>
@@ -268,6 +276,7 @@ export function ChatAgent({
   const [activeRun, setActiveRun] = useState<AgentRun | null>(null);
   const [pendingInterrupt, setPendingInterrupt] = useState<AgentInterrupt | null>(null);
   const [selectedOptionId, setSelectedOptionId] = useState<string | null>(null);
+  const [selectedOptionIds, setSelectedOptionIds] = useState<string[]>([]);
   const [interruptLoading, setInterruptLoading] = useState(false);
   const [pendingApproval, setPendingApproval] = useState<AgentApproval | null>(null);
   const [decisionLoading, setDecisionLoading] = useState<"approve" | "reject" | null>(null);
@@ -294,6 +303,7 @@ export function ChatAgent({
       setPendingApproval(approval);
       setPendingInterrupt(interrupt);
       setSelectedOptionId(null);
+      setSelectedOptionIds([]);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Chat Agent 加载失败");
     } finally {
@@ -335,6 +345,7 @@ export function ChatAgent({
       setPendingApproval(null);
       setPendingInterrupt(null);
       setSelectedOptionId(null);
+      setSelectedOptionIds([]);
       setDraft("");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "无法新建对话");
@@ -425,6 +436,7 @@ export function ChatAgent({
       if (interrupt && typeof interrupt === "object" && "id" in interrupt) {
         setPendingInterrupt(interrupt as AgentInterrupt);
         setSelectedOptionId(null);
+        setSelectedOptionIds([]);
       }
       source.close();
       eventSourceRef.current = null;
@@ -517,16 +529,21 @@ export function ChatAgent({
   ], [node, shot]);
 
   const resumeInterrupt = useCallback(async () => {
-    if (!pendingInterrupt || !selectedOptionId || interruptLoading || !thread) return;
+    const multiSelect = pendingInterrupt?.kind === "multi_select"
+      || pendingInterrupt?.payload.selection_mode === "multi";
+    if (!pendingInterrupt || (multiSelect ? selectedOptionIds.length === 0 : !selectedOptionId) || interruptLoading || !thread) return;
     setInterruptLoading(true);
     setError(null);
     try {
       const result = await api.resumeAgentInterrupt(pendingInterrupt.run_id, {
         interrupt_id: pendingInterrupt.id,
-        response: { option_id: selectedOptionId },
+        response: multiSelect
+          ? { option_ids: selectedOptionIds }
+          : { option_id: selectedOptionId },
       });
       setPendingInterrupt(null);
       setSelectedOptionId(null);
+      setSelectedOptionIds([]);
       setMessages(await api.listAgentMessages(thread.id));
       setActiveRun(result.run);
       subscribeToRun(result.run, result.event_cursor);
@@ -535,7 +552,17 @@ export function ChatAgent({
     } finally {
       setInterruptLoading(false);
     }
-  }, [interruptLoading, pendingInterrupt, selectedOptionId, subscribeToRun, thread]);
+  }, [interruptLoading, pendingInterrupt, selectedOptionId, selectedOptionIds, subscribeToRun, thread]);
+
+  const selectInterruptOption = useCallback((optionId: string) => {
+    if (pendingInterrupt?.kind === "multi_select" || pendingInterrupt?.payload.selection_mode === "multi") {
+      setSelectedOptionIds((current) => current.includes(optionId)
+        ? current.filter((id) => id !== optionId)
+        : [...current, optionId]);
+      return;
+    }
+    setSelectedOptionId(optionId);
+  }, [pendingInterrupt]);
 
   const decideApproval = useCallback(async (decision: "approve" | "reject") => {
     if (!pendingApproval || decisionLoading) return;
@@ -675,8 +702,9 @@ export function ChatAgent({
                     interrupt={pendingInterrupt?.id === messageInterrupt.id ? pendingInterrupt : messageInterrupt}
                     active={pendingInterrupt?.id === messageInterrupt.id}
                     selectedOptionId={selectedOptionId}
+                    selectedOptionIds={selectedOptionIds}
                     loading={interruptLoading}
-                    onSelect={setSelectedOptionId}
+                    onSelect={selectInterruptOption}
                     onConfirm={() => void resumeInterrupt()}
                   />
                 ) : null}

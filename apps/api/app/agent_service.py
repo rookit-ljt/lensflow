@@ -91,6 +91,152 @@ def requires_node_generation_confirmation(
     }
 
 
+def requires_creative_direction_choice(
+    message: str,
+    selected_node_ids: list[str],
+) -> bool:
+    """Ask for a small, structured choice before planning a new canvas.
+
+    This keeps first-time users from having to understand node types. The
+    decision is deliberately limited to broad creation intent; detailed
+    prompts and canvas actions remain handled by the Agent conversation.
+    """
+
+    if selected_node_ids:
+        return False
+    normalized = "".join(message.strip().lower().split())
+    if not normalized or normalized.startswith("我选择"):
+        return False
+    if any(term in normalized for term in ("怎么", "如何", "为什么", "分析", "建议")):
+        return False
+    return any(term in normalized for term in ("制作视频", "生成视频", "做视频", "视频"))
+
+
+def requires_reference_preference_choice(
+    message: str,
+    selected_node_ids: list[str],
+) -> bool:
+    if selected_node_ids:
+        return False
+    normalized = "".join(message.strip().lower().split())
+    return any(term in normalized for term in ("参考图", "参考图片", "素材引用", "首帧", "尾帧"))
+
+
+def create_creative_direction_interrupt(
+    session: Session,
+    run: AgentRun,
+    thread: AgentThread,
+) -> AgentInterrupt:
+    options = [
+        {
+            "id": "text_to_video",
+            "label": "文字生成视频",
+            "caption": "从一句创意开始，Agent 帮你拆成镜头",
+            "tone": "amber",
+            "value": "text",
+        },
+        {
+            "id": "image_to_video",
+            "label": "图片生成视频",
+            "caption": "上传参考图，让主体自然动起来",
+            "tone": "cyan",
+            "value": "image",
+        },
+        {
+            "id": "first_last_frame",
+            "label": "首尾帧视频",
+            "caption": "用开始和结束图片控制镜头变化",
+            "tone": "steel",
+            "value": "keyframe",
+        },
+    ]
+    last_sequence = session.scalar(
+        select(func.max(AgentInterrupt.sequence)).where(AgentInterrupt.run_id == run.id)
+    )
+    interrupt = AgentInterrupt(
+        run_id=run.id,
+        sequence=int(last_sequence or 0) + 1,
+        kind="single_select",
+        decision_key="creative_direction",
+        title="先选择视频方式",
+        description="选一个最接近的方向，Agent 会据此准备镜头和提示词。",
+        payload={
+            "presentation": "creative_direction",
+            "selection_mode": "single",
+            "options": options,
+            "confirm_label": "确认并继续",
+        },
+    )
+    session.add(interrupt)
+    session.flush()
+    interrupt_payload = AgentInterruptRead.model_validate(interrupt).model_dump(mode="json")
+    message = AgentMessage(
+        thread_id=thread.id,
+        run_id=run.id,
+        role=AgentMessageRole.ASSISTANT,
+        content="为了帮你快速开始，先选择一种视频制作方式。",
+        message_type="interrupt",
+        message_metadata={"interrupt": interrupt_payload},
+    )
+    session.add(message)
+    session.flush()
+    run.status = AgentRunStatus.WAITING_USER
+    run.current_step = "wait_for_creative_direction"
+    _append_completed_message_event(session, run, message)
+    append_agent_event(session, run, "interrupt.created", {"interrupt": interrupt_payload})
+    session.commit()
+    return interrupt
+
+
+def create_reference_preference_interrupt(
+    session: Session,
+    run: AgentRun,
+    thread: AgentThread,
+) -> AgentInterrupt:
+    options = [
+        {"id": "subject_identity", "label": "保持主体一致", "caption": "人物、角色或产品外观不变", "tone": "cyan"},
+        {"id": "scene_style", "label": "保持场景风格", "caption": "环境、材质和色彩基调不变", "tone": "amber"},
+        {"id": "composition", "label": "参考构图关系", "caption": "沿用主体位置、景别和空间关系", "tone": "steel"},
+        {"id": "lighting", "label": "参考光影氛围", "caption": "延续光线方向、天气和情绪", "tone": "magenta"},
+    ]
+    last_sequence = session.scalar(
+        select(func.max(AgentInterrupt.sequence)).where(AgentInterrupt.run_id == run.id)
+    )
+    interrupt = AgentInterrupt(
+        run_id=run.id,
+        sequence=int(last_sequence or 0) + 1,
+        kind="multi_select",
+        decision_key="reference_preferences",
+        title="选择参考图要保留的内容",
+        description="可多选。Agent 会把这些要求写入后续视频提示词。",
+        payload={
+            "presentation": "reference_preferences",
+            "selection_mode": "multi",
+            "options": options,
+            "confirm_label": "确认并继续",
+        },
+    )
+    session.add(interrupt)
+    session.flush()
+    interrupt_payload = AgentInterruptRead.model_validate(interrupt).model_dump(mode="json")
+    message = AgentMessage(
+        thread_id=thread.id,
+        run_id=run.id,
+        role=AgentMessageRole.ASSISTANT,
+        content="我看到你提供了参考素材。请选择希望优先保留的内容，可多选。",
+        message_type="interrupt",
+        message_metadata={"interrupt": interrupt_payload},
+    )
+    session.add(message)
+    session.flush()
+    run.status = AgentRunStatus.WAITING_USER
+    run.current_step = "wait_for_reference_preferences"
+    _append_completed_message_event(session, run, message)
+    append_agent_event(session, run, "interrupt.created", {"interrupt": interrupt_payload})
+    session.commit()
+    return interrupt
+
+
 def create_node_generation_interrupt(
     session: Session,
     run: AgentRun,
@@ -374,11 +520,17 @@ def execute_agent_run(run_id: str) -> None:
                 "errors": [],
             }
             latest_message = messages[-1]["content"]
+            selected_node_ids = [str(value) for value in snapshot.get("selected_node_ids", [])]
             if requires_visual_style_choice(latest_message):
                 create_visual_style_interrupt(session, run, thread)
                 return
+            if requires_reference_preference_choice(latest_message, selected_node_ids):
+                create_reference_preference_interrupt(session, run, thread)
+                return
+            if requires_creative_direction_choice(latest_message, selected_node_ids):
+                create_creative_direction_interrupt(session, run, thread)
+                return
 
-            selected_node_ids = [str(value) for value in snapshot.get("selected_node_ids", [])]
             if requires_node_generation_confirmation(latest_message, selected_node_ids):
                 create_node_generation_interrupt(session, run, thread)
                 return
@@ -698,27 +850,43 @@ def resolve_agent_interrupt(
         or interrupt.status != AgentInterruptStatus.PENDING
     ):
         raise CanvasPatchError("该选择已经处理")
-    if interrupt.kind != "single_select":
-        raise CanvasPatchError("当前只支持单选确认")
-
-    option_id = str(response.get("option_id") or "")
     options = interrupt.payload.get("options", [])
-    selected = next(
-        (
-            option
-            for option in options
-            if isinstance(option, dict) and str(option.get("id")) == option_id
-        ),
-        None,
-    )
-    if selected is None:
-        raise CanvasPatchError("请选择有效选项")
-
-    resolved_response = {
-        "option_id": option_id,
-        "label": str(selected.get("label") or option_id),
-        "value": selected.get("value", option_id),
-    }
+    if interrupt.kind == "multi_select":
+        raw_option_ids = response.get("option_ids")
+        if not isinstance(raw_option_ids, list) or not raw_option_ids:
+            raise CanvasPatchError("请至少选择一个选项")
+        option_ids = [str(item) for item in raw_option_ids]
+        selected_options = [
+            option for option in options
+            if isinstance(option, dict) and str(option.get("id")) in option_ids
+        ]
+        if len(selected_options) != len(set(option_ids)):
+            raise CanvasPatchError("请选择有效选项")
+        resolved_response = {
+            "option_ids": option_ids,
+            "labels": [str(option.get("label") or option.get("id")) for option in selected_options],
+            "values": [option.get("value", option.get("id")) for option in selected_options],
+        }
+        resolved_response["label"] = "、".join(resolved_response["labels"])
+    elif interrupt.kind == "single_select":
+        option_id = str(response.get("option_id") or "")
+        selected = next(
+            (
+                option
+                for option in options
+                if isinstance(option, dict) and str(option.get("id")) == option_id
+            ),
+            None,
+        )
+        if selected is None:
+            raise CanvasPatchError("请选择有效选项")
+        resolved_response = {
+            "option_id": option_id,
+            "label": str(selected.get("label") or option_id),
+            "value": selected.get("value", option_id),
+        }
+    else:
+        raise CanvasPatchError("当前问题类型不受支持")
     interrupt.response = resolved_response
     interrupt.status = AgentInterruptStatus.RESOLVED
     interrupt.resolved_at = datetime.now(UTC)
@@ -745,7 +913,7 @@ def resolve_agent_interrupt(
     elif interrupt.decision_key == "generate_selected_node":
         decision_content = (
             "我确认开始生成当前节点"
-            if option_id == "confirm"
+            if resolved_response.get("option_id") == "confirm"
             else "我选择暂不生成当前节点"
         )
     else:
@@ -1100,6 +1268,15 @@ def resume_agent_run(run_id: str) -> None:
                 session.commit()
                 if generation is not None:
                     _dispatch_agent_generation(session, generation)
+                return
+            if interrupt.decision_key in {"creative_direction", "reference_preferences"}:
+                # The selected option is persisted as a decision message. Run
+                # the normal Agent turn again so it can use that choice when
+                # drafting the first shot and canvas plan.
+                run.status = AgentRunStatus.THINKING
+                run.current_step = "load_context"
+                session.commit()
+                execute_agent_run(run_id)
                 return
             if interrupt.decision_key != "visual_style":
                 raise CanvasPatchError("无法恢复未知的确认步骤")

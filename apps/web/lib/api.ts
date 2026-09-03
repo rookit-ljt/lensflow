@@ -322,6 +322,9 @@ export interface AgentInterrupt {
   };
   response: {
     option_id?: string;
+    option_ids?: string[];
+    labels?: string[];
+    values?: unknown[];
     label?: string;
     value?: unknown;
     [key: string]: unknown;
