@@ -102,6 +102,10 @@ def is_canvas_operation_request(
             "审批卡片",
             "新增节点",
             "创建节点",
+            "生成节点",
+            "视频生成节点",
+            "图片生成节点",
+            "文本生成节点",
         )
     )
     if not has_pending_canvas_proposal:
@@ -123,6 +127,9 @@ def is_canvas_operation_request(
         "继续",
         "确认",
         "同意",
+        "满意",
+        "没问题",
+        "没意见",
         "执行",
         "批准",
         "可以",

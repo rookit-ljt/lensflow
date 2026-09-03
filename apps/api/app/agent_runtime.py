@@ -196,7 +196,7 @@ class SimpleAgentRuntime:
 4. {"type":"bind_asset","target":"selected","asset_id":"资产目录中的 UUID","role":"reference|first_frame|last_frame","description":"..."}
 资产绑定规则：只能使用真实资产目录中的 UUID；普通参考图 role=reference；视频首帧/尾帧分别使用 first_frame/last_frame；资产绑定不会启动模型生成。
 返回结构：{"summary":"...","risk_level":"low","actions":[...]}
-规则：不得删除节点、不得启动模型生成、不得产生付费调用；更新节点只能使用 target=selected，可更新生成节点的 prompt/model/参数，也可更新文本节点的 text_content 或 prompt 节点的 detail；用户明确要求新增、创建、添加或“生成一个节点”时创建节点；只有用户明确要求连接时才连接。用户使用“继续、确认、执行、1、2、3”等短回复时，必须结合紧邻的上一条 assistant 消息理解其确认的画布方案，并把方案转换为上述受支持动作。assistant 之前描述的计划只是上下文，不代表动作已经执行；不得返回超出动作白名单的镜头、项目或数据库操作。没有足够上下文时 actions 返回空数组。"""
+规则：不得删除节点、不得启动模型生成、不得产生付费调用；更新节点只能使用 target=selected，可更新生成节点的 prompt/model/参数，也可更新文本节点的 text_content 或 prompt 节点的 detail；用户明确要求新增、创建、添加或“生成一个节点”时创建节点；只有用户明确要求连接时才连接。用户使用“继续、确认、执行、满意、同意、可以、好的、1、2、3”等短回复时，必须结合紧邻的上一条 assistant 消息理解其确认的画布方案，并把方案转换为上述受支持动作。assistant 之前描述的计划只是上下文，不代表动作已经执行；不得返回超出动作白名单的镜头、项目或数据库操作。没有足够上下文时 actions 返回空数组。"""
         payload = {
             "model": model,
             "messages": [
