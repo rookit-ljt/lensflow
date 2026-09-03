@@ -678,6 +678,8 @@ export function ChatAgent({
             </div>
           ) : messages.map((message) => {
             const messageInterrupt = interruptFromMessage(message);
+            const hasLegacyChoices = Boolean(messageInterrupt?.payload.options?.length);
+            const isQuestionForm = messageInterrupt?.kind === "question_form" || Boolean(messageInterrupt?.payload.questions?.length);
             const displayRole = message.role === "user" ? "user" : "assistant";
             return (
               <div key={message.id} className="chat-agent__message-group">
@@ -688,8 +690,8 @@ export function ChatAgent({
                     : <div>{message.content}</div>}
                   {message.message_metadata.cancelled === true ? <em>回答已停止</em> : null}
                 </article>
-                {messageInterrupt && pendingInterrupt?.id !== messageInterrupt.id ? (
-                  messageInterrupt.kind === "question_form" ? (
+                {messageInterrupt && pendingInterrupt?.id !== messageInterrupt.id && (isQuestionForm || hasLegacyChoices) ? (
+                  isQuestionForm ? (
                     <div className="chat-agent__question-receipt">
                       {messageInterrupt.status === "resolved" ? <><Check />已提交 {messageInterrupt.payload.questions?.length ?? 0} 个问题的回答</> : <><X />问题已取消</>}
                     </div>

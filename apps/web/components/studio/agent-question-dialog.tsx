@@ -22,11 +22,15 @@ function blankAnswer(question: AgentQuestion): AgentQuestionAnswer {
 }
 
 export function AgentQuestionDialog({ interrupt, open, loading, error, onClose, onSubmit }: Props) {
-  const form = interrupt.kind === "question_form";
-  const questions: AgentQuestion[] = interrupt.payload.questions ?? [{
+  const legacyOptions = interrupt.payload.options ?? [];
+  const payloadQuestions = interrupt.payload.questions ?? [];
+  // Older runs can contain a selection interrupt with no options. Treat it
+  // as an open question rather than rendering an empty, non-actionable card.
+  const form = interrupt.kind === "question_form" || (!payloadQuestions.length && !legacyOptions.length);
+  const questions: AgentQuestion[] = payloadQuestions.length ? payloadQuestions : [{
     id: interrupt.id, title: interrupt.title, description: interrupt.description,
-    kind: interrupt.kind === "multi_select" ? "multi_select" : "single_select",
-    options: interrupt.payload.options ?? [],
+    kind: form ? "text" : interrupt.kind === "multi_select" ? "multi_select" : "single_select",
+    options: legacyOptions,
   }];
   const [index, setIndex] = useState(0);
   const [answers, setAnswers] = useState<Record<string, AgentQuestionAnswer>>({});

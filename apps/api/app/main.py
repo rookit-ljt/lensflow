@@ -21,6 +21,7 @@ from .agent_service import (
     append_agent_event,
     execute_agent_run,
     fail_agent_approval,
+    normalize_pending_interrupt,
     resolve_agent_approval,
     resolve_agent_interrupt,
     resume_agent_run,
@@ -1155,7 +1156,13 @@ def get_pending_agent_interrupt(
         )
         .order_by(AgentInterrupt.created_at.desc())
     )
-    return session.scalar(statement)
+    interrupt = session.scalar(statement)
+    if interrupt is not None and normalize_pending_interrupt(interrupt):
+        # Persist the repair so the event payload, message metadata, and the
+        # resume endpoint all observe the same question-form representation.
+        session.commit()
+        session.refresh(interrupt)
+    return interrupt
 
 
 @app.post(

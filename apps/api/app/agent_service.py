@@ -462,7 +462,34 @@ def create_llm_confirmation_interrupt(
         "confirm_label": request.get("confirm_label") or "确认选择",
     }
     if request.get("kind") == "question_form":
-        payload = {"presentation": "question_form", "questions": request["questions"]}
+        questions = request.get("questions")
+        # A malformed/legacy model response must never create an empty card.
+        # Convert it to a single open question so the user still has a clear
+        # way to provide direction and resume the run.
+        if not isinstance(questions, list) or not questions:
+            questions = [{
+                "id": "fallback_direction",
+                "title": str(request.get("title") or "请补充创作要求"),
+                "description": str(request.get("description") or "请补充你的想法，回答后继续。"),
+                "kind": "text",
+                "options": [],
+            }]
+        payload = {"presentation": "question_form", "questions": questions}
+    elif not isinstance(payload["options"], list) or not payload["options"]:
+        # Keep compatibility with old single/multi-select interrupts that
+        # were persisted without options. They are normalized by the pending
+        # endpoint as well, but this protects newly created interrupts.
+        payload = {
+            "presentation": "question_form",
+            "questions": [{
+                "id": "fallback_direction",
+                "title": str(request.get("title") or "请补充创作要求"),
+                "description": str(request.get("description") or "请补充你的想法，回答后继续。"),
+                "kind": "text",
+                "options": [],
+            }],
+        }
+        request = {**request, "kind": "question_form"}
     interrupt = AgentInterrupt(
         run_id=run.id,
         sequence=int(last_sequence or 0) + 1,
@@ -477,6 +504,30 @@ def create_llm_confirmation_interrupt(
     run.status = AgentRunStatus.WAITING_USER
     run.current_step = "wait_for_confirmation"
     return interrupt
+
+
+def normalize_pending_interrupt(interrupt: AgentInterrupt) -> bool:
+    """Repair empty legacy selection interrupts before sending them to Web."""
+    if interrupt.status != AgentInterruptStatus.PENDING:
+        return False
+    if interrupt.kind not in {"single_select", "multi_select"}:
+        return False
+    options = interrupt.payload.get("options")
+    if isinstance(options, list) and options:
+        return False
+    interrupt.kind = "question_form"
+    interrupt.decision_key = "llm_questions"
+    interrupt.payload = {
+        "presentation": "question_form",
+        "questions": [{
+            "id": f"fallback_{interrupt.id.hex[:12]}",
+            "title": interrupt.title or "请补充创作要求",
+            "description": interrupt.description or "请补充你的想法，回答后继续。",
+            "kind": "text",
+            "options": [],
+        }],
+    }
+    return True
 
 
 def execute_agent_run(run_id: str) -> None:
@@ -945,6 +996,10 @@ def resolve_agent_interrupt(
         or interrupt.status != AgentInterruptStatus.PENDING
     ):
         raise CanvasPatchError("该选择已经处理")
+    # A client may resume an older interrupt before it has fetched the
+    # sanitized pending-interrupt response. Repair it at the mutation boundary
+    # as well, so empty legacy cards can never dead-end the conversation.
+    normalize_pending_interrupt(interrupt)
     options = interrupt.payload.get("options", [])
     if interrupt.kind == "question_form":
         try:
