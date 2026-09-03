@@ -109,6 +109,13 @@ def test_create_project_and_shot() -> None:
         assert saved["viewport"]["zoom"] == 0.9
         assert saved["revision"] == workflow["revision"] + 1
 
+        run_response = client.post(f"/api/shots/{shot_id}/run")
+        assert run_response.status_code == 202
+        run_results = run_response.json()
+        assert run_results
+        assert all(item["status"] == "succeeded" for item in run_results)
+        assert any(item["kind"] == "image" for item in run_results)
+
         revisioned_payload = {
             "schema_version": saved["schema_version"],
             "nodes": saved["nodes"],
