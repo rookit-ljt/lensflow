@@ -129,6 +129,21 @@ def test_parse_confirmation_request_falls_back_to_natural_chinese_question() -> 
     ]
 
 
+def test_parse_confirmation_request_supports_numbered_and_yes_no_choices() -> None:
+    numbered = parse_confirmation_request(
+        "请选择输出比例：\n1. 横屏 16:9\n2. 竖屏 9:16\n"
+    )
+    yes_no = parse_confirmation_request("需要确认是否使用首尾帧吗？")
+
+    assert numbered is not None
+    assert [option["value"] for option in numbered["options"]] == [
+        "横屏 16:9",
+        "竖屏 9:16",
+    ]
+    assert yes_no is not None
+    assert len(yes_no["options"]) == 2
+
+
 def test_llm_confirmation_pauses_and_resumes_with_user_choice(monkeypatch) -> None:
     states: list[AgentState] = []
 

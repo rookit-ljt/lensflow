@@ -84,38 +84,83 @@ def parse_confirmation_request(content: str) -> dict[str, Any] | None:
 
 
 def _parse_natural_confirmation_request(content: str) -> dict[str, Any] | None:
-    """Best-effort fallback for models that ask a choice in ordinary prose.
+    """Best-effort fallback for models that ask a choice in ordinary prose."""
 
-    Qwen and other OpenAI-compatible models occasionally omit the protocol
-    marker while still presenting alternatives with “还是”. We only promote
-    text that explicitly asks for confirmation and contains at least two
-    alternatives, so normal explanatory questions remain ordinary chat.
-    """
+    confirmation_terms = (
+        "需要向您确认",
+        "请您确认",
+        "需要确认",
+        "请选择",
+        "请告诉我",
+        "请决定",
+        "需要您选择",
+        "可多选",
+    )
+    if not any(term in content for term in confirmation_terms):
+        return None
 
-    if not any(term in content for term in ("需要向您确认", "请您确认", "请选择", "请告诉我")):
+    lines = [line.strip() for line in content.splitlines() if line.strip()]
+    question_index = next(
+        (index for index, line in enumerate(lines) if "？" in line or "?" in line),
+        None,
+    )
+    if question_index is None:
+        question_index = next(
+            (index for index, line in enumerate(lines) if any(term in line for term in confirmation_terms)),
+            None,
+        )
+    if question_index is None:
         return None
-    question_lines = [
-        line.strip(" -*•")
-        for line in content.splitlines()
-        if "？" in line and ("：" in line or ":" in line) and "还是" in line
-    ]
-    if not question_lines:
+    line = lines[question_index].lstrip("-*• ")
+    if re.match(r"^(?:\d+[.)、]|[A-Za-z][.)])\s*", line):
         return None
-    line = question_lines[0]
-    heading, body = re.split(r"[：:]", line, maxsplit=1)
+    if "：" in line or ":" in line:
+        heading, body = re.split(r"[：:]", line, maxsplit=1)
+    else:
+        heading, body = "创作方向", line
     body = body.strip()
-    # Split around “还是” first, then remove punctuation and explanatory
-    # suffixes. This covers both “A 还是 B” and “A、B，还是 C”.
-    alternatives = re.split(r"\s*还是\s*", body, maxsplit=1)
-    if len(alternatives) != 2:
-        return None
-    first, second = alternatives
-    first_parts = re.split(r"[、,，]\s*", first)
-    candidates = [part.strip(" ，,。？！?：:") for part in first_parts if part.strip(" ，,。？！?：:")]
-    candidates.append(second.strip(" ，,。？！?：:"))
-    # A sentence prefix such as “您是指” is not an option itself.
-    if candidates and any(prefix in candidates[0] for prefix in ("您是指", "你是指", "您希望", "你希望", "希望是")):
-        candidates[0] = re.sub(r"^(?:您是指|你是指|您希望|你希望|希望是)\s*", "", candidates[0])
+
+    candidates: list[str] = []
+    # Numbered, lettered, or bulleted options immediately following a
+    # question are the most reliable natural-language representation.
+    for option_line in lines[question_index + 1 : question_index + 8]:
+        match = re.match(r"^(?:[-*•]|\d+[.)、]|[A-Za-z][.)])\s*(.+)$", option_line)
+        if match:
+            value = match.group(1).strip(" ，,。？！?：:")
+            if len(value) >= 2:
+                candidates.append(value)
+        elif candidates:
+            break
+
+    # Inline alternatives: “A 还是 B”, “A 或者 B”, and “A、B，还是 C”.
+    if len(candidates) < 2:
+        alternatives = re.split(r"\s*(?:还是|或者|或)\s*", body, maxsplit=1)
+        if len(alternatives) == 2:
+            first, second = alternatives
+            first_parts = re.split(r"[、,，]\s*", first)
+            candidates = [
+                part.strip(" ，,。？！?：:")
+                for part in first_parts
+                if part.strip(" ，,。？！?：:")
+            ]
+            candidates.append(second.strip(" ，,。？！?：:"))
+
+    # Yes/no questions are also a decision and should not fall back to a
+    # free-form chat response.
+    if len(candidates) < 2 and (
+        body.startswith(("是否", "要不要", "需不需要", "可以吗", "确认吗"))
+        or body.endswith(("吗？", "吗?"))
+    ):
+        candidates = ["是，继续", "否，我要调整"]
+
+    # Remove question prefixes from the first option and discard malformed
+    # fragments. A single natural question without alternatives stays prose.
+    if candidates:
+        candidates[0] = re.sub(
+            r"^(?:您是指|你是指|您希望|你希望|希望是|是否|要不要)\s*",
+            "",
+            candidates[0],
+        )
     candidates = [item.rstrip("？?") for item in candidates if len(item) >= 2]
     if len(candidates) < 2:
         return None
