@@ -185,3 +185,20 @@ def test_agent_first_workflow_can_start_empty() -> None:
         regular_response = client.get(f"/api/shots/{shot_id}/workflow")
         assert regular_response.status_code == 200
         assert regular_response.json()["nodes"] == []
+
+
+def test_delete_project_removes_project_and_canvas_data() -> None:
+    with authenticated_client() as client:
+        project = client.post("/api/projects", json={"name": "待删除项目"}).json()
+        shot = client.post(
+            f"/api/projects/{project['id']}/shots",
+            json={"sequence_number": 1, "title": "开场"},
+        ).json()
+        workflow = client.get(f"/api/shots/{shot['id']}/workflow").json()
+        assert workflow["nodes"]
+
+        deleted = client.delete(f"/api/projects/{project['id']}")
+        assert deleted.status_code == 204
+        assert client.get(f"/api/projects/{project['id']}").status_code == 404
+        assert client.get(f"/api/shots/{shot['id']}/workflow").status_code == 404
+        assert all(item["id"] != project["id"] for item in client.get("/api/projects").json())

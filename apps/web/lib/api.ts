@@ -457,6 +457,9 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  deleteProject: (projectId: string) => request<void>(`/api/projects/${projectId}`, {
+    method: "DELETE",
+  }),
   createShot: (projectId: string, payload: ShotInput) =>
     request<Shot>(`/api/projects/${projectId}/shots`, {
       method: "POST",

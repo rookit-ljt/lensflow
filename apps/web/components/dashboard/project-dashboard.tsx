@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { type FormEvent, type MouseEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowUpRight,
@@ -10,6 +10,7 @@ import {
   LogOut,
   Plus,
   RefreshCw,
+  Trash2,
 } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -42,6 +43,7 @@ export function ProjectDashboard({ currentUser, onLogout }: ProjectDashboardProp
   const [description, setDescription] = useState("");
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const loadProjects = async () => {
@@ -72,6 +74,23 @@ export function ProjectDashboard({ currentUser, onLogout }: ProjectDashboardProp
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "项目创建失败");
       setCreating(false);
+    }
+  };
+
+  const deleteProject = async (event: MouseEvent, project: ProjectSummary) => {
+    event.stopPropagation();
+    if (deletingProjectId) return;
+    const confirmed = window.confirm(`确定删除项目“${project.name}”？\n项目中的镜头、素材和生成记录都会被永久删除。`);
+    if (!confirmed) return;
+    setDeletingProjectId(project.id);
+    setError(null);
+    try {
+      await api.deleteProject(project.id);
+      setProjects((current) => current.filter((item) => item.id !== project.id));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "项目删除失败");
+    } finally {
+      setDeletingProjectId(null);
     }
   };
 
@@ -158,6 +177,17 @@ export function ProjectDashboard({ currentUser, onLogout }: ProjectDashboardProp
             >
               <div className="dashboard-project-card__body">
                 <ArrowUpRight className="dashboard-project-card__open" />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="dashboard-project-card__delete"
+                  aria-label={`删除项目 ${project.name}`}
+                  disabled={deletingProjectId === project.id}
+                  onClick={(event) => void deleteProject(event, project)}
+                >
+                  {deletingProjectId === project.id ? <LoaderCircle className="action-spinner" /> : <Trash2 />}
+                </Button>
                 <h3>{project.name}</h3>
                 {project.description ? <p>{project.description}</p> : null}
                 <footer><span><Clock3 />{formatProjectDate(project.updated_at)}</span></footer>

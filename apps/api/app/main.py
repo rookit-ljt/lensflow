@@ -836,6 +836,87 @@ def get_project(
     return project
 
 
+@app.delete(
+    "/api/projects/{project_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["projects"],
+)
+def delete_project(
+    project_id: uuid.UUID,
+    session: DatabaseSession,
+    user: CurrentUser,
+) -> Response:
+    """Permanently remove a project and all of its owned production data."""
+    project = _owned_project(session, user, project_id)
+    active_run = session.scalar(
+        select(AgentRun.id)
+        .join(AgentThread, AgentThread.id == AgentRun.thread_id)
+        .where(
+            AgentThread.project_id == project_id,
+            AgentRun.status.in_([
+                AgentRunStatus.THINKING,
+                AgentRunStatus.PLANNING,
+                AgentRunStatus.WAITING_USER,
+                AgentRunStatus.WAITING_APPROVAL,
+                AgentRunStatus.EXECUTING,
+                AgentRunStatus.WAITING_EXTERNAL_JOB,
+            ]),
+        )
+    )
+    if active_run is not None:
+        raise HTTPException(status_code=409, detail="项目仍有 Agent 任务处理中，请先停止后再删除")
+
+    active_generation = session.scalar(
+        select(Generation.id)
+        .join(Shot, Shot.id == Generation.shot_id)
+        .where(
+            Shot.project_id == project_id,
+            Generation.status.in_([GenerationStatus.QUEUED, GenerationStatus.RUNNING]),
+        )
+    )
+    if active_generation is not None:
+        raise HTTPException(status_code=409, detail="项目仍有视频或图片任务处理中，请等待完成或取消后再删除")
+
+    # Keep nullable feedback references valid even on SQLite installations
+    # where foreign-key enforcement is disabled.
+    session.execute(
+        update(Feedback)
+        .where(Feedback.project_id == project_id)
+        .values(project_id=None, shot_id=None, generation_id=None)
+    )
+
+    # Workflow is intentionally not modelled as a Project relationship. Delete
+    # it explicitly (including canvas children) before the project cascade.
+    workflows = list(
+        session.scalars(
+            select(Workflow)
+            .join(Shot, Shot.id == Workflow.shot_id)
+            .where(Shot.project_id == project_id)
+            .options(selectinload(Workflow.nodes), selectinload(Workflow.edges))
+        )
+    )
+    for workflow in workflows:
+        session.delete(workflow)
+
+    upload_paths = []
+    project_assets = list(session.scalars(select(Asset).where(Asset.project_id == project_id)))
+    for asset in project_assets:
+        if asset.source_upload_id is None:
+            continue
+        located = find_uploaded_image(settings, asset.source_upload_id)
+        if located is not None:
+            upload_paths.append(located[0])
+        upload = session.get(StoredUpload, asset.source_upload_id)
+        if upload is not None:
+            session.delete(upload)
+
+    session.delete(project)
+    session.commit()
+    for path in upload_paths:
+        path.unlink(missing_ok=True)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @app.get("/api/projects/{project_id}/export", tags=["projects"])
 def export_project(
     project_id: uuid.UUID,
