@@ -4915,7 +4915,7 @@ body {
   bottom: 14px;
   display: flex;
   flex-direction: column;
-  width: min(408px, calc(100vw - 28px));
+  width: min(var(--chat-agent-width, 408px), calc(100vw - 28px));
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 18px;
   background: rgba(21, 21, 23, 0.985);
@@ -4926,6 +4926,48 @@ body {
   transform: translateX(28px);
   transition: opacity 180ms ease, transform 180ms ease;
   backdrop-filter: blur(26px);
+}
+
+.chat-agent__resize-handle {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 14px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.chat-agent__resize-handle::after {
+  position: absolute;
+  top: 50%;
+  left: 6px;
+  width: 2px;
+  height: 48px;
+  border-radius: 999px;
+  background: rgba(187, 204, 235, 0.35);
+  content: "";
+  opacity: 0;
+  transform: translateY(-50%);
+  transition: opacity 160ms ease, background 160ms ease;
+}
+
+.chat-agent__resize-handle:hover::after,
+.chat-agent__resize-handle:focus-visible::after,
+.chat-agent.is-resizing .chat-agent__resize-handle::after {
+  background: #bbcceb;
+  opacity: 1;
+}
+
+.chat-agent.is-resizing {
+  user-select: none;
+  transition: opacity 180ms ease;
+}
+
+.chat-agent.is-resizing,
+.chat-agent.is-resizing * {
+  cursor: col-resize !important;
 }
 
 .chat-agent.is-open {
@@ -6026,6 +6068,10 @@ body {
     bottom: 8px;
     left: 8px;
     width: auto;
+  }
+
+  .chat-agent__resize-handle {
+    display: none;
   }
 }
 

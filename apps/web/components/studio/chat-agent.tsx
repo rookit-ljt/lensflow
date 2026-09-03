@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode, type PointerEvent as ReactPointerEvent } from "react";
 import {
   ArrowUp,
   Bot,
@@ -63,6 +63,9 @@ type ChatAgentProps = {
 };
 
 const terminalStatuses = new Set(["completed", "failed", "cancelled"]);
+const AGENT_PANEL_MIN_WIDTH = 320;
+const AGENT_PANEL_MAX_WIDTH = 760;
+const AGENT_PANEL_DEFAULT_WIDTH = 408;
 
 function renderInlineMarkdown(value: string): ReactNode[] {
   const tokens = value.split(/(\*\*[^*]+\*\*|`[^`]+`|\*[^*]+\*)/g).filter(Boolean);
@@ -267,6 +270,10 @@ export function ChatAgent({
   onClose,
 }: ChatAgentProps) {
   const projectFirst = !shot;
+  const [agentPanelWidth, setAgentPanelWidth] = useState(AGENT_PANEL_DEFAULT_WIDTH);
+  const [agentPanelWidthHydrated, setAgentPanelWidthHydrated] = useState(false);
+  const [resizingPanel, setResizingPanel] = useState(false);
+  const resizeStartRef = useRef<{ x: number; width: number } | null>(null);
   const [thread, setThread] = useState<AgentThread | null>(null);
   const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [draft, setDraft] = useState("");
@@ -284,6 +291,52 @@ export function ChatAgent({
   const [error, setError] = useState<string | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const stored = Number(window.localStorage.getItem("ai-video-studio-agent-width"));
+    if (Number.isFinite(stored)) {
+      setAgentPanelWidth(Math.min(AGENT_PANEL_MAX_WIDTH, Math.max(AGENT_PANEL_MIN_WIDTH, stored)));
+    }
+    setAgentPanelWidthHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    if (agentPanelWidthHydrated) {
+      window.localStorage.setItem("ai-video-studio-agent-width", String(agentPanelWidth));
+    }
+  }, [agentPanelWidth, agentPanelWidthHydrated]);
+
+  useEffect(() => {
+    if (!resizingPanel) return;
+    const onPointerMove = (event: PointerEvent) => {
+      const start = resizeStartRef.current;
+      if (!start) return;
+      const viewportMax = Math.max(AGENT_PANEL_MIN_WIDTH, Math.min(AGENT_PANEL_MAX_WIDTH, window.innerWidth - 48));
+      setAgentPanelWidth(Math.min(viewportMax, Math.max(AGENT_PANEL_MIN_WIDTH, start.width + start.x - event.clientX)));
+    };
+    const onPointerUp = () => {
+      resizeStartRef.current = null;
+      setResizingPanel(false);
+    };
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    return () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+    };
+  }, [resizingPanel]);
+
+  const startPanelResize = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (projectFirst || event.button !== 0) return;
+    event.preventDefault();
+    resizeStartRef.current = { x: event.clientX, width: agentPanelWidth };
+    setResizingPanel(true);
+  }, [agentPanelWidth, projectFirst]);
+
+  const adjustPanelWidth = useCallback((delta: number) => {
+    const viewportMax = Math.max(AGENT_PANEL_MIN_WIDTH, Math.min(AGENT_PANEL_MAX_WIDTH, window.innerWidth - 48));
+    setAgentPanelWidth((current) => Math.min(viewportMax, Math.max(AGENT_PANEL_MIN_WIDTH, current + delta)));
+  }, []);
 
   const loadConversation = useCallback(async () => {
     setLoading(true);
@@ -623,7 +676,27 @@ export function ChatAgent({
   };
 
   return (
-    <aside className={`chat-agent ${projectFirst ? "chat-agent--project-first" : ""} ${open ? "is-open" : ""}`} aria-label="Chat Agent" aria-hidden={!open}>
+    <aside
+      className={`chat-agent ${projectFirst ? "chat-agent--project-first" : ""} ${open ? "is-open" : ""} ${resizingPanel ? "is-resizing" : ""}`}
+      aria-label="Chat Agent"
+      aria-hidden={!open}
+      style={{ "--chat-agent-width": `${agentPanelWidth}px` } as CSSProperties}
+    >
+      {!projectFirst ? <div
+        className="chat-agent__resize-handle"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="调整 Agent 面板宽度"
+        aria-valuemin={AGENT_PANEL_MIN_WIDTH}
+        aria-valuemax={AGENT_PANEL_MAX_WIDTH}
+        aria-valuenow={Math.round(agentPanelWidth)}
+        tabIndex={0}
+        onPointerDown={startPanelResize}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowLeft") { event.preventDefault(); adjustPanelWidth(24); }
+          if (event.key === "ArrowRight") { event.preventDefault(); adjustPanelWidth(-24); }
+        }}
+      /> : null}
       {!projectFirst ? <header className="chat-agent__header">
         <div className="chat-agent__identity">
           <span className="chat-agent__mark"><Bot /></span>
