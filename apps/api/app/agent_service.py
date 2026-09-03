@@ -12,7 +12,7 @@ from .agent_canvas import (
     is_canvas_operation_request,
 )
 from .agent_context import build_agent_context
-from .agent_runtime import AgentState, create_agent_runtime
+from .agent_runtime import AgentState, create_agent_runtime, parse_confirmation_request
 from .config import get_settings
 from .database import SessionLocal
 from .db_models import (
@@ -438,6 +438,45 @@ def create_visual_style_interrupt(
     return interrupt
 
 
+def create_llm_confirmation_interrupt(
+    session: Session,
+    run: AgentRun,
+    request: dict[str, object],
+) -> AgentInterrupt:
+    """Persist a model-authored question as the same durable UI interrupt.
+
+    The model only supplies presentation data. It cannot mutate the canvas;
+    the selected response is persisted as a user decision and fed into the
+    next run, which is the seam that can later map to LangGraph interrupt/resume.
+    """
+
+    last_sequence = session.scalar(
+        select(func.max(AgentInterrupt.sequence)).where(AgentInterrupt.run_id == run.id)
+    )
+    payload = {
+        "presentation": "llm_confirmation",
+        "selection_mode": "multi" if request.get("kind") == "multi_select" else "single",
+        "options": request["options"],
+        "confirm_label": request.get("confirm_label") or "确认选择",
+    }
+    interrupt = AgentInterrupt(
+        run_id=run.id,
+        sequence=int(last_sequence or 0) + 1,
+        kind=str(request["kind"]),
+        decision_key=str(request.get("decision_key") or "llm_confirmation"),
+        title=str(request.get("title") or "请确认下一步"),
+        description=str(request.get("description") or "请选择一个方案后继续。"),
+        payload=payload,
+    )
+    session.add(interrupt)
+    session.flush()
+    run.status = AgentRunStatus.WAITING_USER
+    run.current_step = "wait_for_confirmation"
+    interrupt_payload = AgentInterruptRead.model_validate(interrupt).model_dump(mode="json")
+    append_agent_event(session, run, "interrupt.created", {"interrupt": interrupt_payload})
+    return interrupt
+
+
 def execute_agent_run(run_id: str) -> None:
     settings = get_settings()
     with SessionLocal() as session:
@@ -495,14 +534,29 @@ def execute_agent_run(run_id: str) -> None:
             # later decision message. Always treat the latest message for this
             # run as the current input; moving the original request to the end
             # would re-trigger the same interrupt forever.
+            # The latest user message is the current turn. This also covers a
+            # resumed interrupt where the decision message is appended to the
+            # original run after the first model response.
             current_user_message = next(
                 (
                     message
-                    for message in reversed(ordered_messages)
-                    if message.run_id == run.id and message.role == AgentMessageRole.USER
+                    for message in ordered_messages
+                    if message.role == AgentMessageRole.USER
+                    and message.message_type == "decision"
+                    and str(message.run_id) == str(run.id)
                 ),
                 None,
             )
+            if current_user_message is None:
+                current_user_message = next(
+                    (
+                        message
+                        for message in reversed(ordered_messages)
+                        if message.role == AgentMessageRole.USER
+                        and str(message.run_id) == str(run.id)
+                    ),
+                    None,
+                )
             if current_user_message is not None:
                 ordered_messages = [
                     message for message in ordered_messages if message.id != current_user_message.id
@@ -689,6 +743,42 @@ def execute_agent_run(run_id: str) -> None:
             content = "".join(content_parts).strip()
             if not content or assistant_message is None:
                 raise RuntimeError("Chat Agent 返回了空内容")
+
+            confirmation = parse_confirmation_request(content)
+            if confirmation is not None:
+                # Strip the protocol envelope from what the user sees. The
+                # actual options are rendered from message_metadata and can be
+                # resumed through the durable interrupt endpoint.
+                assistant_message.content = str(confirmation["message"])
+                assistant_message.message_type = "interrupt"
+                interrupt = create_llm_confirmation_interrupt(session, run, confirmation)
+                interrupt_payload = AgentInterruptRead.model_validate(interrupt).model_dump(
+                    mode="json"
+                )
+                assistant_message.message_metadata = {
+                    "provider": result.provider,
+                    "model": result.model,
+                    "provider_job_id": result.provider_job_id,
+                    "partial": False,
+                    "interrupt": interrupt_payload,
+                }
+                append_agent_event(
+                    session,
+                    run,
+                    "message.completed",
+                    {
+                        "message_id": str(assistant_message.id),
+                        "role": assistant_message.role.value,
+                        "content": assistant_message.content,
+                        "message_type": assistant_message.message_type,
+                        "message_metadata": assistant_message.message_metadata,
+                        "created_at": assistant_message.created_at.isoformat()
+                        if assistant_message.created_at
+                        else datetime.now(UTC).isoformat(),
+                    },
+                )
+                session.commit()
+                return
 
             assistant_message.content = content
             assistant_message.message_metadata = {
@@ -1273,7 +1363,7 @@ def resume_agent_run(run_id: str) -> None:
                 if generation is not None:
                     _dispatch_agent_generation(session, generation)
                 return
-            if interrupt.decision_key in {"creative_direction", "reference_preferences"}:
+            if interrupt.decision_key in {"creative_direction", "reference_preferences"} or interrupt.decision_key.startswith("llm_"):
                 # The selected option is persisted as a decision message. Run
                 # the normal Agent turn again so it can use that choice when
                 # drafting the first shot and canvas plan.

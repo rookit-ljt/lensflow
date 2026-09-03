@@ -9,6 +9,79 @@ import httpx
 from .config import Settings
 from .providers.openai_compatible import OpenAICompatibleTextProvider
 
+_CONFIRMATION_START = "[[AGENT_CONFIRMATION]]"
+_CONFIRMATION_END = "[[/AGENT_CONFIRMATION]]"
+
+
+def parse_confirmation_request(content: str) -> dict[str, Any] | None:
+    """Parse the strict confirmation envelope emitted by the LLM.
+
+    The envelope is deliberately opt-in so ordinary questions remain normal
+    chat messages. Keeping parsing server-side means the model cannot create a
+    real canvas operation; it can only ask the user for a bounded decision.
+    """
+
+    start = content.find(_CONFIRMATION_START)
+    if start < 0:
+        return None
+    end = content.find(_CONFIRMATION_END, start + len(_CONFIRMATION_START))
+    if end < 0:
+        return None
+    raw = content[start + len(_CONFIRMATION_START) : end].strip()
+    raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.IGNORECASE)
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+
+    kind = str(payload.get("kind") or payload.get("selection_mode") or "single_select")
+    if kind in {"single", "radio"}:
+        kind = "single_select"
+    elif kind in {"multi", "checkbox", "multiple"}:
+        kind = "multi_select"
+    if kind not in {"single_select", "multi_select"}:
+        return None
+    raw_options = payload.get("options")
+    if not isinstance(raw_options, list) or not 2 <= len(raw_options) <= 8:
+        return None
+
+    options: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for index, item in enumerate(raw_options):
+        if not isinstance(item, dict):
+            return None
+        option_id = str(item.get("id") or f"option_{index + 1}").strip()
+        label = str(item.get("label") or "").strip()
+        if not label or option_id in seen_ids:
+            return None
+        seen_ids.add(option_id)
+        options.append(
+            {
+                "id": option_id[:80],
+                "label": label[:160],
+                "caption": str(item.get("caption") or item.get("description") or "").strip()[:300],
+                "value": item.get("value", label),
+                "tone": str(item.get("tone") or "slate")[:30],
+            }
+        )
+    title = str(payload.get("title") or "请确认下一步").strip()[:160]
+    description = str(payload.get("description") or "请选择一个方案后继续。").strip()[:2000]
+    message = str(payload.get("message") or payload.get("summary") or description).strip()[:4000]
+    decision_key = str(payload.get("decision_key") or "llm_confirmation").strip()[:80]
+    if not title or not description:
+        return None
+    return {
+        "title": title,
+        "description": description,
+        "message": message,
+        "kind": kind,
+        "decision_key": decision_key if decision_key.startswith("llm_") else "llm_confirmation",
+        "options": options,
+        "confirm_label": str(payload.get("confirm_label") or "确认选择").strip()[:40],
+    }
+
 
 class AgentState(TypedDict):
     """Serializable state contract that can later become a LangGraph State."""
@@ -365,7 +438,16 @@ class SimpleAgentRuntime:
                         "本次调用是只读对话通道。你可以分析、建议和起草内容，但绝不能声称已经创建审批卡片、"
                         "CanvasPatch、节点、连线或生成任务，也不能承诺界面即将自动弹出卡片。"
                         "只有服务端进入受控工具分支时才会真实产生这些界面状态。若用户希望执行操作，"
-                        "请让用户明确说出要创建、修改、连接或生成哪个节点。"
+                        "请让用户明确说出要创建、修改、连接或生成哪个节点。\n"
+                        "当你的回答需要用户在两个或更多方案中做决定，必须在回答末尾追加且仅追加以下结构化标记；"
+                        "不需要决定时禁止输出该标记。标记内只能是有效 JSON，不要放 Markdown：\n"
+                        "[[AGENT_CONFIRMATION]]{\"title\":\"问题标题\",\"description\":\"为什么需要选择\","
+                        "\"message\":\"给用户看的简短说明\",\"kind\":\"single_select\","
+                        "\"decision_key\":\"llm_confirmation\",\"options\":[{\"id\":\"a\","
+                        "\"label\":\"方案 A\",\"caption\":\"说明\",\"value\":\"a\"},"
+                        "{\"id\":\"b\",\"label\":\"方案 B\",\"caption\":\"说明\",\"value\":\"b\"}],"
+                        "\"confirm_label\":\"确认选择\"}[[/AGENT_CONFIRMATION]]\n"
+                        "kind 只能是 single_select 或 multi_select；单选使用 radio，多选使用 checkbox。"
                     ),
                 },
                 {

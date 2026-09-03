@@ -9,6 +9,7 @@ from app.agent_runtime import (
     AgentRuntimeStream,
     AgentState,
     SimpleAgentRuntime,
+    parse_confirmation_request,
 )
 from app.config import Settings
 from app.database import SessionLocal
@@ -95,6 +96,91 @@ def test_simple_agent_runtime_streams_openai_chunks() -> None:
 
     assert chunks == ["第一段", "，第二段"]
     assert captured["stream"] is True
+
+
+def test_parse_confirmation_request_normalizes_single_and_multi_options() -> None:
+    content = """我建议先确定输出方向。\n[[AGENT_CONFIRMATION]]
+    {"title":"输出方向","description":"请选择生成方式","message":"请先选择一种生成方式",
+    "kind":"multi","decision_key":"style_choice","options":[
+      {"id":"t2v","label":"文生视频","description":"从文字开始","value":"text_to_video"},
+      {"id":"i2v","label":"图片生视频","caption":"使用参考图","value":"image_to_video"}
+    ]}[[/AGENT_CONFIRMATION]]"""
+
+    parsed = parse_confirmation_request(content)
+
+    assert parsed is not None
+    assert parsed["kind"] == "multi_select"
+    assert parsed["decision_key"] == "llm_confirmation"
+    assert parsed["options"][0]["value"] == "text_to_video"
+    assert parsed["options"][0]["caption"] == "从文字开始"
+
+
+def test_llm_confirmation_pauses_and_resumes_with_user_choice(monkeypatch) -> None:
+    states: list[AgentState] = []
+
+    class ConfirmationRuntime:
+        def stream(self, state: AgentState) -> AgentRuntimeStream:
+            states.append(state)
+            if len(states) == 1:
+                content = (
+                    "为了稳定生成，请先确定方向。"
+                    '[[AGENT_CONFIRMATION]]{"title":"生成方式","description":"请选择输入方式",'
+                    '"message":"先选一种生成方式，我再继续规划。","kind":"single_select",'
+                    '"options":[{"id":"text","label":"文生视频","caption":"从 Prompt 开始"},'
+                    '{"id":"image","label":"图片生视频","caption":"使用参考图"}]}'
+                    "[[/AGENT_CONFIRMATION]]"
+                )
+            else:
+                content = "收到你的选择，我会按该方向继续规划。"
+            return AgentRuntimeStream(
+                chunks=(content,),
+                provider="mock",
+                model="test-agent",
+                provider_job_id=state["run_id"],
+            )
+
+    monkeypatch.setattr("app.agent_service.create_agent_runtime", lambda _: ConfirmationRuntime())
+    with authenticated_client() as client:
+        project = client.post("/api/projects", json={"name": "确认协议测试"}).json()
+        shot = client.post(
+            f"/api/projects/{project['id']}/shots",
+            json={"sequence_number": 1, "title": "测试镜头"},
+        ).json()
+        workflow = client.get(f"/api/shots/{shot['id']}/workflow").json()
+        thread = client.post(
+            f"/api/projects/{project['id']}/agent/threads", json={"title": "确认对话"}
+        ).json()
+        first = client.post(
+            f"/api/agent/threads/{thread['id']}/runs",
+            json={
+                "message": "帮我规划这个镜头",
+                "context": {
+                    "project_id": project["id"],
+                    "shot_id": shot["id"],
+                    "selected_node_ids": [],
+                    "canvas_version": workflow["updated_at"],
+                },
+            },
+        ).json()
+        assert client.get(f"/api/agent/runs/{first['id']}").json()["status"] == "waiting_user"
+        pending = client.get(f"/api/agent/threads/{thread['id']}/pending-interrupt").json()
+        assert pending["decision_key"] == "llm_confirmation"
+        assert pending["payload"]["options"][1]["label"] == "图片生视频"
+
+        resumed = client.post(
+            f"/api/agent/runs/{first['id']}/resume",
+            json={
+                "interrupt_id": pending["id"],
+                "response": {"option_id": "image"},
+            },
+        )
+        assert resumed.status_code == 200
+        assert client.get(f"/api/agent/runs/{first['id']}").json()["status"] == "completed"
+        messages = client.get(f"/api/agent/threads/{thread['id']}/messages").json()
+
+    assert len(states) == 2
+    assert states[1]["messages"][-1]["content"] == "我选择“图片生视频”", states[1]["messages"]
+    assert messages[-1]["content"] == "收到你的选择，我会按该方向继续规划。"
 
 
 def test_agent_thread_run_and_events(monkeypatch) -> None:

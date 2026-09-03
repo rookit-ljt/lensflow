@@ -5415,6 +5415,52 @@ body {
   overflow: hidden;
 }
 
+.chat-agent__decision-modal {
+  position: absolute;
+  z-index: 30;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+
+.chat-agent__decision-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(7, 7, 9, 0.72);
+  backdrop-filter: blur(4px);
+}
+
+.chat-agent__decision-modal-card {
+  position: relative;
+  z-index: 1;
+  width: min(520px, 100%);
+  max-height: min(90%, 620px);
+  overflow: auto;
+  border: 1px solid rgba(232, 180, 99, 0.22);
+  border-radius: 18px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.48), 0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+
+.chat-agent__decision-modal-card .chat-agent__decision {
+  border: 0;
+  border-radius: 17px;
+  box-shadow: none;
+  padding: 20px;
+}
+
+@media (max-width: 640px) {
+  .chat-agent__decision-modal {
+    padding: 12px;
+    align-items: end;
+  }
+
+  .chat-agent__decision-modal-card {
+    width: 100%;
+    max-height: 84%;
+  }
+}
+
 .chat-agent__decision::before {
   position: absolute;
   top: 0;

@@ -665,6 +665,23 @@ export function ChatAgent({
         onClose={() => setSkillOpen(false)}
       />
 
+      {pendingInterrupt ? (
+        <div className="chat-agent__decision-modal" role="dialog" aria-modal="true" aria-label={pendingInterrupt.title}>
+          <div className="chat-agent__decision-modal-backdrop" aria-hidden="true" />
+          <div className="chat-agent__decision-modal-card">
+            <DecisionCard
+              interrupt={pendingInterrupt}
+              active
+              selectedOptionId={selectedOptionId}
+              selectedOptionIds={selectedOptionIds}
+              loading={interruptLoading}
+              onSelect={selectInterruptOption}
+              onConfirm={() => void resumeInterrupt()}
+            />
+          </div>
+        </div>
+      ) : null}
+
       {!projectFirst ? <section className="chat-agent__context" aria-label="当前上下文">
         <div className="chat-agent__context-heading"><span>{shot ? `SCENE ${String(shot.sequence_number).padStart(2, "0")}` : "PROJECT"}</span><Badge variant="outline">{modelLabel}</Badge></div>
         <strong>{shot?.title ?? "从一个想法开始"}</strong>
@@ -697,10 +714,10 @@ export function ChatAgent({
                     : <div>{message.content}</div>}
                   {message.message_metadata.cancelled === true ? <em>回答已停止</em> : null}
                 </article>
-                {messageInterrupt ? (
+                {messageInterrupt && pendingInterrupt?.id !== messageInterrupt.id ? (
                   <DecisionCard
                     interrupt={pendingInterrupt?.id === messageInterrupt.id ? pendingInterrupt : messageInterrupt}
-                    active={pendingInterrupt?.id === messageInterrupt.id}
+                    active={false}
                     selectedOptionId={selectedOptionId}
                     selectedOptionIds={selectedOptionIds}
                     loading={interruptLoading}
