@@ -115,6 +115,20 @@ def test_parse_confirmation_request_normalizes_single_and_multi_options() -> Non
     assert parsed["options"][0]["caption"] == "从文字开始"
 
 
+def test_parse_confirmation_request_falls_back_to_natural_chinese_question() -> None:
+    parsed = parse_confirmation_request(
+        "关键问题确认\n需要向您确认以下问题：\n"
+        "视觉画风：您希望写实电影级特效，还是 3D 动画风格？"
+    )
+
+    assert parsed is not None
+    assert parsed["decision_key"] == "llm_natural_confirmation"
+    assert [option["value"] for option in parsed["options"]] == [
+        "写实电影级特效",
+        "3D 动画风格",
+    ]
+
+
 def test_llm_confirmation_pauses_and_resumes_with_user_choice(monkeypatch) -> None:
     states: list[AgentState] = []
 

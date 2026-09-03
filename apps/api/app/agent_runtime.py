@@ -23,18 +23,18 @@ def parse_confirmation_request(content: str) -> dict[str, Any] | None:
 
     start = content.find(_CONFIRMATION_START)
     if start < 0:
-        return None
+        return _parse_natural_confirmation_request(content)
     end = content.find(_CONFIRMATION_END, start + len(_CONFIRMATION_START))
     if end < 0:
-        return None
+        return _parse_natural_confirmation_request(content)
     raw = content[start + len(_CONFIRMATION_START) : end].strip()
     raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.IGNORECASE)
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError:
-        return None
+        return _parse_natural_confirmation_request(content)
     if not isinstance(payload, dict):
-        return None
+        return _parse_natural_confirmation_request(content)
 
     kind = str(payload.get("kind") or payload.get("selection_mode") or "single_select")
     if kind in {"single", "radio"}:
@@ -42,20 +42,20 @@ def parse_confirmation_request(content: str) -> dict[str, Any] | None:
     elif kind in {"multi", "checkbox", "multiple"}:
         kind = "multi_select"
     if kind not in {"single_select", "multi_select"}:
-        return None
+        return _parse_natural_confirmation_request(content)
     raw_options = payload.get("options")
     if not isinstance(raw_options, list) or not 2 <= len(raw_options) <= 8:
-        return None
+        return _parse_natural_confirmation_request(content)
 
     options: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
     for index, item in enumerate(raw_options):
         if not isinstance(item, dict):
-            return None
+            return _parse_natural_confirmation_request(content)
         option_id = str(item.get("id") or f"option_{index + 1}").strip()
         label = str(item.get("label") or "").strip()
         if not label or option_id in seen_ids:
-            return None
+            return _parse_natural_confirmation_request(content)
         seen_ids.add(option_id)
         options.append(
             {
@@ -80,6 +80,63 @@ def parse_confirmation_request(content: str) -> dict[str, Any] | None:
         "decision_key": decision_key if decision_key.startswith("llm_") else "llm_confirmation",
         "options": options,
         "confirm_label": str(payload.get("confirm_label") or "确认选择").strip()[:40],
+    }
+
+
+def _parse_natural_confirmation_request(content: str) -> dict[str, Any] | None:
+    """Best-effort fallback for models that ask a choice in ordinary prose.
+
+    Qwen and other OpenAI-compatible models occasionally omit the protocol
+    marker while still presenting alternatives with “还是”. We only promote
+    text that explicitly asks for confirmation and contains at least two
+    alternatives, so normal explanatory questions remain ordinary chat.
+    """
+
+    if not any(term in content for term in ("需要向您确认", "请您确认", "请选择", "请告诉我")):
+        return None
+    question_lines = [
+        line.strip(" -*•")
+        for line in content.splitlines()
+        if "？" in line and ("：" in line or ":" in line) and "还是" in line
+    ]
+    if not question_lines:
+        return None
+    line = question_lines[0]
+    heading, body = re.split(r"[：:]", line, maxsplit=1)
+    body = body.strip()
+    # Split around “还是” first, then remove punctuation and explanatory
+    # suffixes. This covers both “A 还是 B” and “A、B，还是 C”.
+    alternatives = re.split(r"\s*还是\s*", body, maxsplit=1)
+    if len(alternatives) != 2:
+        return None
+    first, second = alternatives
+    first_parts = re.split(r"[、,，]\s*", first)
+    candidates = [part.strip(" ，,。？！?：:") for part in first_parts if part.strip(" ，,。？！?：:")]
+    candidates.append(second.strip(" ，,。？！?：:"))
+    # A sentence prefix such as “您是指” is not an option itself.
+    if candidates and any(prefix in candidates[0] for prefix in ("您是指", "你是指", "您希望", "你希望", "希望是")):
+        candidates[0] = re.sub(r"^(?:您是指|你是指|您希望|你希望|希望是)\s*", "", candidates[0])
+    candidates = [item.rstrip("？?") for item in candidates if len(item) >= 2]
+    if len(candidates) < 2:
+        return None
+    options = [
+        {
+            "id": f"natural_{index + 1}",
+            "label": item[:160],
+            "caption": "根据你的选择继续规划",
+            "value": item,
+            "tone": ("amber", "cyan", "steel", "magenta")[index % 4],
+        }
+        for index, item in enumerate(candidates[:6])
+    ]
+    return {
+        "title": heading.strip()[:160] or "请确认创作方向",
+        "description": "请先确认这一项，Agent 会根据你的选择继续提问和规划。",
+        "message": f"请确认“{heading.strip()}”的选择。",
+        "kind": "single_select",
+        "decision_key": "llm_natural_confirmation",
+        "options": options,
+        "confirm_label": "确认并继续",
     }
 
 
