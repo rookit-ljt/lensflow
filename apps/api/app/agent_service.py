@@ -2,7 +2,8 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import func, select
+from pydantic import ValidationError
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from .agent_canvas import (
@@ -12,6 +13,7 @@ from .agent_canvas import (
     is_canvas_operation_request,
 )
 from .agent_context import build_agent_context
+from .agent_questions import resolve_question_answers
 from .agent_runtime import AgentState, create_agent_runtime, parse_confirmation_request
 from .config import get_settings
 from .database import SessionLocal
@@ -456,9 +458,11 @@ def create_llm_confirmation_interrupt(
     payload = {
         "presentation": "llm_confirmation",
         "selection_mode": "multi" if request.get("kind") == "multi_select" else "single",
-        "options": request["options"],
+        "options": request.get("options", []),
         "confirm_label": request.get("confirm_label") or "确认选择",
     }
+    if request.get("kind") == "question_form":
+        payload = {"presentation": "question_form", "questions": request["questions"]}
     interrupt = AgentInterrupt(
         run_id=run.id,
         sequence=int(last_sequence or 0) + 1,
@@ -472,8 +476,6 @@ def create_llm_confirmation_interrupt(
     session.flush()
     run.status = AgentRunStatus.WAITING_USER
     run.current_step = "wait_for_confirmation"
-    interrupt_payload = AgentInterruptRead.model_validate(interrupt).model_dump(mode="json")
-    append_agent_event(session, run, "interrupt.created", {"interrupt": interrupt_payload})
     return interrupt
 
 
@@ -530,22 +532,12 @@ def execute_agent_run(run_id: str) -> None:
                 )
             )
             ordered_messages = list(reversed(recent_messages))
-            # A resumed run can contain both the original user request and a
-            # later decision message. Always treat the latest message for this
-            # run as the current input; moving the original request to the end
-            # would re-trigger the same interrupt forever.
-            # The latest user message is the current turn. This also covers a
-            # resumed interrupt where the decision message is appended to the
-            # original run after the first model response.
-            current_user_message = next(
-                (
-                    message
-                    for message in ordered_messages
-                    if message.role == AgentMessageRole.USER
-                    and message.message_type == "decision"
-                    and str(message.run_id) == str(run.id)
-                ),
-                None,
+            # The exact resumed message ID avoids SQLite timestamp ties and
+            # selecting the first answer again on a second question round.
+            resume_message_id = snapshot.get("resume_message_id")
+            current_user_message = (
+                session.get(AgentMessage, uuid.UUID(str(resume_message_id)))
+                if resume_message_id else None
             )
             if current_user_message is None:
                 current_user_message = next(
@@ -565,11 +557,22 @@ def execute_agent_run(run_id: str) -> None:
                 {"role": message.role.value, "content": message.content}
                 for message in ordered_messages
             ]
+            answered_titles = []
+            for resolved in session.scalars(select(AgentInterrupt).where(
+                AgentInterrupt.run_id == run.id,
+                AgentInterrupt.status == AgentInterruptStatus.RESOLVED,
+            ).order_by(AgentInterrupt.sequence)):
+                response = resolved.response or {}
+                if resolved.kind == "question_form":
+                    answered_titles.extend(
+                        str(answer["title"]) for answer in response.get("answers", [])
+                    )
+                    context_text += "\n已提交的问题答案（跳过不代表同意，不要重新询问）：\n" + str(response.get("label", ""))
             state: AgentState = {
                 "thread_id": str(thread.id),
                 "run_id": str(run.id),
                 "messages": messages,
-                "context": snapshot,
+                "context": {**snapshot, "answered_question_titles": answered_titles},
                 "context_text": context_text,
                 "status": run.status.value,
                 "current_step": run.current_step,
@@ -579,22 +582,17 @@ def execute_agent_run(run_id: str) -> None:
             }
             latest_message = messages[-1]["content"]
             selected_node_ids = [str(value) for value in snapshot.get("selected_node_ids", [])]
-            if requires_visual_style_choice(latest_message):
+            is_question_answer = bool(current_user_message and current_user_message.message_type == "decision")
+            if not is_question_answer and requires_visual_style_choice(latest_message):
                 create_visual_style_interrupt(session, run, thread)
                 return
-            if requires_reference_preference_choice(latest_message, selected_node_ids):
-                create_reference_preference_interrupt(session, run, thread)
-                return
-            if requires_creative_direction_choice(latest_message, selected_node_ids):
-                create_creative_direction_interrupt(session, run, thread)
-                return
 
-            if requires_node_generation_confirmation(latest_message, selected_node_ids):
+            if not is_question_answer and requires_node_generation_confirmation(latest_message, selected_node_ids):
                 create_node_generation_interrupt(session, run, thread)
                 return
 
             runtime = create_agent_runtime(settings)
-            if is_canvas_operation_request(latest_message, selected_node_ids, messages):
+            if not is_question_answer and is_canvas_operation_request(latest_message, selected_node_ids, messages):
                 run.status = AgentRunStatus.PLANNING
                 run.current_step = "compile_canvas_patch"
                 append_agent_event(session, run, "plan.started", {"step": run.current_step})
@@ -673,7 +671,9 @@ def execute_agent_run(run_id: str) -> None:
                 session.commit()
                 return
 
-            result = runtime.stream(state)
+            # The production runtime validates a whole JSON turn before any
+            # text is published. Legacy runtime adapters still use stream().
+            result = runtime.respond(state) if hasattr(runtime, "respond") else runtime.stream(state)
             run.provider = result.provider
             run.model = result.model
             append_agent_event(
@@ -744,7 +744,7 @@ def execute_agent_run(run_id: str) -> None:
             if not content or assistant_message is None:
                 raise RuntimeError("Chat Agent 返回了空内容")
 
-            confirmation = parse_confirmation_request(content)
+            confirmation = result.confirmation if result.structured else parse_confirmation_request(content)
             if confirmation is not None:
                 # Strip the protocol envelope from what the user sees. The
                 # actual options are rendered from message_metadata and can be
@@ -777,6 +777,7 @@ def execute_agent_run(run_id: str) -> None:
                         else datetime.now(UTC).isoformat(),
                     },
                 )
+                append_agent_event(session, run, "interrupt.created", {"interrupt": interrupt_payload})
                 session.commit()
                 return
 
@@ -945,7 +946,12 @@ def resolve_agent_interrupt(
     ):
         raise CanvasPatchError("该选择已经处理")
     options = interrupt.payload.get("options", [])
-    if interrupt.kind == "multi_select":
+    if interrupt.kind == "question_form":
+        try:
+            resolved_response = resolve_question_answers(interrupt.payload.get("questions", []), response)
+        except (ValueError, ValidationError):
+            raise CanvasPatchError("回答格式无效，请为每题选择选项、填写答案或明确跳过") from None
+    elif interrupt.kind == "multi_select":
         raw_option_ids = response.get("option_ids")
         if not isinstance(raw_option_ids, list) or not raw_option_ids:
             raise CanvasPatchError("请至少选择一个选项")
@@ -981,6 +987,14 @@ def resolve_agent_interrupt(
         }
     else:
         raise CanvasPatchError("当前问题类型不受支持")
+    # Claim this pause once, even when two tabs submit at the same time.
+    claimed = session.execute(
+        update(AgentRun).where(
+            AgentRun.id == run.id, AgentRun.status == AgentRunStatus.WAITING_USER,
+        ).values(status=AgentRunStatus.PLANNING, current_step="resume_interrupt")
+    )
+    if claimed.rowcount != 1:
+        raise CanvasPatchError("该选择已经处理，请刷新对话查看最新状态")
     interrupt.response = resolved_response
     interrupt.status = AgentInterruptStatus.RESOLVED
     interrupt.resolved_at = datetime.now(UTC)
@@ -1002,7 +1016,9 @@ def resolve_agent_interrupt(
             message.message_metadata = {"interrupt": interrupt_payload}
             break
 
-    if interrupt.decision_key == "visual_style":
+    if interrupt.kind == "question_form":
+        decision_content = "我的回答：\n" + str(resolved_response["label"])
+    elif interrupt.decision_key == "visual_style":
         decision_content = f"我选择“{resolved_response['label']}”画风"
     elif interrupt.decision_key == "generate_selected_node":
         decision_content = (
@@ -1027,6 +1043,7 @@ def resolve_agent_interrupt(
     )
     session.add(decision_message)
     session.flush()
+    run.context_snapshot = {**run.context_snapshot, "resume_message_id": str(decision_message.id)}
     run.status = AgentRunStatus.PLANNING
     run.current_step = "resume_interrupt"
     append_agent_event(

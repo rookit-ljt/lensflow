@@ -1,6 +1,6 @@
 import enum
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import (
     JSON,
@@ -450,7 +450,9 @@ class AgentMessage(Base):
     content: Mapped[str] = mapped_column(Text)
     message_type: Mapped[str] = mapped_column(String(40), default="text")
     message_metadata: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), server_default=func.now()
+    )
 
     thread: Mapped[AgentThread] = relationship(back_populates="messages")
     run: Mapped[AgentRun | None] = relationship(back_populates="messages")

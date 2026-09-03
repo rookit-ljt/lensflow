@@ -305,6 +305,23 @@ export interface AgentInterruptOption {
   value?: unknown;
 }
 
+export interface AgentQuestion {
+  id: string;
+  title: string;
+  description?: string;
+  kind: "single_select" | "multi_select" | "text";
+  options: AgentInterruptOption[];
+}
+
+export interface AgentQuestionAnswer {
+  question_id: string;
+  option_ids: string[];
+  text: string;
+  skipped: boolean;
+  title?: string;
+  labels?: string[];
+}
+
 export interface AgentInterrupt {
   id: string;
   run_id: string;
@@ -315,12 +332,14 @@ export interface AgentInterrupt {
   title: string;
   description: string;
   payload: {
+    questions?: AgentQuestion[];
     presentation?: string;
     options?: AgentInterruptOption[];
     confirm_label?: string;
     [key: string]: unknown;
   };
   response: {
+    answers?: AgentQuestionAnswer[];
     option_id?: string;
     option_ids?: string[];
     labels?: string[];

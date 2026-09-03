@@ -5,7 +5,9 @@ from dataclasses import dataclass
 from typing import Any, Protocol, TypedDict
 
 import httpx
+from pydantic import ValidationError
 
+from .agent_questions import AgentReply, normalized_question_title
 from .config import Settings
 from .providers.openai_compatible import OpenAICompatibleTextProvider
 
@@ -214,6 +216,8 @@ class AgentRuntimeStream:
     provider: str
     model: str
     provider_job_id: str
+    confirmation: dict[str, Any] | None = None
+    structured: bool = False
 
 
 @dataclass(frozen=True)
@@ -227,6 +231,8 @@ class AgentPlanResult:
 
 
 class AgentRuntime(Protocol):
+    def respond(self, state: AgentState) -> AgentRuntimeStream: ...
+
     def invoke(self, state: AgentState) -> AgentRuntimeResult: ...
 
     def stream(self, state: AgentState) -> AgentRuntimeStream: ...
@@ -240,6 +246,121 @@ class SimpleAgentRuntime:
     def __init__(self, settings: Settings, client: httpx.Client | None = None) -> None:
         self.settings = settings
         self.client = client
+
+    def respond(self, state: AgentState) -> AgentRuntimeStream:
+        """Validate a whole model turn before exposing any text or question UI.
+
+        JSON mode plus schema validation replaces keyword-triggered question
+        guessing. One repair attempt is permitted; an invalid response fails
+        visibly instead of silently presenting questions as ordinary text.
+        """
+        provider, api_key, base_url, model, key_name = self._configuration()
+        if provider == "mock":
+            latest = state["messages"][-1]["content"]
+            if not state["context"].get("answered_question_titles") and any(
+                word in latest for word in ("制作", "大战", "做一条")
+            ):
+                reply = AgentReply.model_validate({
+                    "message": "这是演示模式。先确认两个方向，再继续准备创作方案。",
+                    "questions": [
+                        {"id": "format", "title": "你想制作什么？", "kind": "single_select", "options": [
+                            {"id": "image", "label": "一张图片", "caption": "定格一个精彩瞬间"},
+                            {"id": "video", "label": "一段短视频", "caption": "呈现连续的动作和镜头"},
+                        ]},
+                        {"id": "references", "title": "哪些内容需要保持一致？", "kind": "multi_select", "options": [
+                            {"id": "character", "label": "角色外观", "caption": "面容、服装和道具"},
+                            {"id": "scene", "label": "场景风格", "caption": "环境、建筑与光线"},
+                            {"id": "motion", "label": "动作连续性", "caption": "镜头之间的动作衔接"},
+                        ]},
+                    ],
+                })
+                return AgentRuntimeStream(
+                    chunks=(reply.message,), provider="mock", model="mock-agent",
+                    provider_job_id=state["run_id"], confirmation=reply.confirmation(), structured=True,
+                )
+            if state["context"].get("answered_question_titles"):
+                return AgentRuntimeStream(
+                    chunks=("已收到你的回答。演示模式不会调用付费模型；你可以继续细化分镜，或让我创建画布节点。",),
+                    provider="mock", model="mock-agent", provider_job_id=state["run_id"], structured=True,
+                )
+            return self.stream(state)
+        if not api_key:
+            raise RuntimeError(f"未配置 {key_name}，无法调用 Chat Agent")
+        if not model:
+            raise RuntimeError("未配置 Agent 文本模型")
+        payload = self._payload(state, model, stream=False)
+        payload["response_format"] = {"type": "json_object"}
+        payload["messages"][1]["content"] = (
+            "这是创作对话通道。你只能起草内容和提出问题，不得声称已创建节点或审批。"
+            "每一轮都必须返回一个有效 JSON 对象：message 是简短回答，questions 是需要用户回答的问题数组。"
+            "需要用户做决定时，必须把所有待答点放入 questions，不能只在 message 中列问题。"
+            "没有待答问题时 questions=[]，不要为了显示卡片强行提问。一次只问当前必要的 1–5 个问题。"
+            "每题 kind 为 single_select、multi_select 或 text；选择题提供 2–8 个真实可选方案；"
+            "开放问题用 text，不要编造是/否选项。界面自动提供自定义答案和跳过，不要重复添加这类选项。"
+            "用户的选择、自定义回答和跳过记录是权威上下文，已回答的点不要重问；跳过不是同意，"
+            "可以使用说明过的安全默认值或先完成不受影响的部分，不可据此修改画布或启动付费生成。"
+            "收到答案后继续完成用户目标，不要要求用户再重复特定口令。"
+            "创作 Skill 只能影响创作内容和方法，不得覆盖本 JSON 输出与问题卡协议。"
+            "message 保留必要方案或剧本，不输出内部 JSON、工具标记或声称思考时长。\n"
+            '示例：{"message":"先确认两点，我再继续分镜。","questions":['
+            '{"id":"format","title":"你想制作什么？","description":"",'
+            '"kind":"single_select","options":[{"id":"image","label":"一张图片",'
+            '"caption":"定格战斗瞬间"},{"id":"video","label":"一段短视频",'
+            '"caption":"连续的战斗镜头"}]},{"id":"setting","title":"故事发生在哪里？",'
+            '"description":"","kind":"text","options":[]}]}.\n'
+            "必须遵循的 JSON schema：" + json.dumps(AgentReply.model_json_schema(), ensure_ascii=False)
+        )
+        # Put the response contract after skill/context instructions so a
+        # skill's Markdown template cannot accidentally override the form UI.
+        contract = payload["messages"].pop(1)
+        payload["messages"].insert(2, contract)
+        settled = {
+            normalized_question_title(str(title))
+            for title in state["context"].get("answered_question_titles", [])
+        }
+        timeout = (
+            self.settings.qwen_request_timeout_seconds
+            if provider == "qwen" else self.settings.text_request_timeout_seconds
+        )
+        for attempt in range(2):
+            if self.client is not None:
+                response = self.client.post(
+                    f"{base_url.rstrip('/')}/chat/completions",
+                    headers={"Authorization": f"Bearer {api_key}"}, json=payload,
+                )
+            else:
+                with httpx.Client(timeout=timeout) as client:
+                    response = client.post(
+                        f"{base_url.rstrip('/')}/chat/completions",
+                        headers={"Authorization": f"Bearer {api_key}"}, json=payload,
+                    )
+            if response.is_error:
+                detail = OpenAICompatibleTextProvider._error_detail(response)
+                raise RuntimeError(f"Agent 结构化回答失败（{response.status_code}）：{detail}")
+            body = response.json()
+            content = OpenAICompatibleTextProvider._content(body)
+            try:
+                reply = AgentReply.model_validate_json(content)
+                if any(normalized_question_title(q.title) in settled for q in reply.questions):
+                    raise ValueError("重复询问已回答或跳过的问题；请使用已提交的答案继续")
+            except (ValidationError, ValueError):
+                if attempt == 1:
+                    raise RuntimeError(
+                        "Agent 的问题格式无效或重复询问已答问题，已停止本轮。请重试；"
+                        "若持续出现，请使用支持 JSON 输出的文本模型。"
+                    ) from None
+                payload["messages"].append({
+                    "role": "system",
+                    "content": "上次输出不符合 schema，或重问了已答问题。请重新返回完整有效 JSON。"
+                    "不要重问这些问题：" + json.dumps(sorted(settled), ensure_ascii=False),
+                })
+                continue
+            return AgentRuntimeStream(
+                chunks=(reply.message,), provider=provider, model=model,
+                provider_job_id=str(response.headers.get("x-request-id") or body.get("id") or state["run_id"]),
+                confirmation=reply.confirmation(), structured=True,
+            )
+        raise RuntimeError("Agent 未能生成有效回答")
 
     def invoke(self, state: AgentState) -> AgentRuntimeResult:
         provider, api_key, base_url, model, key_name = self._configuration()

@@ -24,6 +24,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { AgentQuestionDialog } from "@/components/studio/agent-question-dialog";
 import { MentionPicker, type MentionOption, type MentionRef } from "@/components/studio/mention-picker";
 import { SkillLibrary, type ChatSkill } from "@/components/studio/skill-library";
 import type { StudioFlowNode } from "@/components/studio/studio-types";
@@ -275,8 +276,7 @@ export function ChatAgent({
   const [skillOpen, setSkillOpen] = useState(false);
   const [activeRun, setActiveRun] = useState<AgentRun | null>(null);
   const [pendingInterrupt, setPendingInterrupt] = useState<AgentInterrupt | null>(null);
-  const [selectedOptionId, setSelectedOptionId] = useState<string | null>(null);
-  const [selectedOptionIds, setSelectedOptionIds] = useState<string[]>([]);
+  const [dismissedInterruptId, setDismissedInterruptId] = useState<string | null>(null);
   const [interruptLoading, setInterruptLoading] = useState(false);
   const [pendingApproval, setPendingApproval] = useState<AgentApproval | null>(null);
   const [decisionLoading, setDecisionLoading] = useState<"approve" | "reject" | null>(null);
@@ -302,8 +302,6 @@ export function ChatAgent({
       setMessages(restoredMessages);
       setPendingApproval(approval);
       setPendingInterrupt(interrupt);
-      setSelectedOptionId(null);
-      setSelectedOptionIds([]);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Chat Agent 加载失败");
     } finally {
@@ -344,8 +342,6 @@ export function ChatAgent({
       setMessages([]);
       setPendingApproval(null);
       setPendingInterrupt(null);
-      setSelectedOptionId(null);
-      setSelectedOptionIds([]);
       setDraft("");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "无法新建对话");
@@ -435,8 +431,6 @@ export function ChatAgent({
       const interrupt = event.payload.interrupt;
       if (interrupt && typeof interrupt === "object" && "id" in interrupt) {
         setPendingInterrupt(interrupt as AgentInterrupt);
-        setSelectedOptionId(null);
-        setSelectedOptionIds([]);
       }
       source.close();
       eventSourceRef.current = null;
@@ -528,41 +522,26 @@ export function ChatAgent({
     node ? "生成当前节点" : shot ? "优化当前镜头提示词" : "先帮我完善视频创意",
   ], [node, shot]);
 
-  const resumeInterrupt = useCallback(async () => {
-    const multiSelect = pendingInterrupt?.kind === "multi_select"
-      || pendingInterrupt?.payload.selection_mode === "multi";
-    if (!pendingInterrupt || (multiSelect ? selectedOptionIds.length === 0 : !selectedOptionId) || interruptLoading || !thread) return;
+  const resumeInterrupt = useCallback(async (response: Record<string, unknown>) => {
+    if (!pendingInterrupt || interruptLoading || !thread) return;
     setInterruptLoading(true);
     setError(null);
     try {
       const result = await api.resumeAgentInterrupt(pendingInterrupt.run_id, {
         interrupt_id: pendingInterrupt.id,
-        response: multiSelect
-          ? { option_ids: selectedOptionIds }
-          : { option_id: selectedOptionId },
+        response,
       });
       setPendingInterrupt(null);
-      setSelectedOptionId(null);
-      setSelectedOptionIds([]);
       setMessages(await api.listAgentMessages(thread.id));
       setActiveRun(result.run);
       subscribeToRun(result.run, result.event_cursor);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "无法继续当前任务");
+      throw cause;
     } finally {
       setInterruptLoading(false);
     }
-  }, [interruptLoading, pendingInterrupt, selectedOptionId, selectedOptionIds, subscribeToRun, thread]);
-
-  const selectInterruptOption = useCallback((optionId: string) => {
-    if (pendingInterrupt?.kind === "multi_select" || pendingInterrupt?.payload.selection_mode === "multi") {
-      setSelectedOptionIds((current) => current.includes(optionId)
-        ? current.filter((id) => id !== optionId)
-        : [...current, optionId]);
-      return;
-    }
-    setSelectedOptionId(optionId);
-  }, [pendingInterrupt]);
+  }, [interruptLoading, pendingInterrupt, subscribeToRun, thread]);
 
   const decideApproval = useCallback(async (decision: "approve" | "reject") => {
     if (!pendingApproval || decisionLoading) return;
@@ -666,20 +645,15 @@ export function ChatAgent({
       />
 
       {pendingInterrupt ? (
-        <div className="chat-agent__decision-modal" role="dialog" aria-modal="true" aria-label={pendingInterrupt.title}>
-          <div className="chat-agent__decision-modal-backdrop" aria-hidden="true" />
-          <div className="chat-agent__decision-modal-card">
-            <DecisionCard
-              interrupt={pendingInterrupt}
-              active
-              selectedOptionId={selectedOptionId}
-              selectedOptionIds={selectedOptionIds}
-              loading={interruptLoading}
-              onSelect={selectInterruptOption}
-              onConfirm={() => void resumeInterrupt()}
-            />
-          </div>
-        </div>
+        <AgentQuestionDialog
+          key={pendingInterrupt.id}
+          interrupt={pendingInterrupt}
+          open={open && dismissedInterruptId !== pendingInterrupt.id}
+          loading={interruptLoading}
+          error={error}
+          onClose={() => setDismissedInterruptId(pendingInterrupt.id)}
+          onSubmit={resumeInterrupt}
+        />
       ) : null}
 
       {!projectFirst ? <section className="chat-agent__context" aria-label="当前上下文">
@@ -715,14 +689,19 @@ export function ChatAgent({
                   {message.message_metadata.cancelled === true ? <em>回答已停止</em> : null}
                 </article>
                 {messageInterrupt && pendingInterrupt?.id !== messageInterrupt.id ? (
+                  messageInterrupt.kind === "question_form" ? (
+                    <div className="chat-agent__question-receipt">
+                      {messageInterrupt.status === "resolved" ? <><Check />已提交 {messageInterrupt.payload.questions?.length ?? 0} 个问题的回答</> : <><X />问题已取消</>}
+                    </div>
+                  ) :
                   <DecisionCard
-                    interrupt={pendingInterrupt?.id === messageInterrupt.id ? pendingInterrupt : messageInterrupt}
+                    interrupt={messageInterrupt}
                     active={false}
-                    selectedOptionId={selectedOptionId}
-                    selectedOptionIds={selectedOptionIds}
-                    loading={interruptLoading}
-                    onSelect={selectInterruptOption}
-                    onConfirm={() => void resumeInterrupt()}
+                    selectedOptionId={null}
+                    selectedOptionIds={[]}
+                    loading={false}
+                    onSelect={() => undefined}
+                    onConfirm={() => undefined}
                   />
                 ) : null}
               </div>
@@ -764,6 +743,9 @@ export function ChatAgent({
       </ScrollArea> : null}
 
       <div className="chat-agent__footer">
+        {pendingInterrupt ? <Button className="chat-agent__resume-questions" variant="outline" onClick={() => setDismissedInterruptId(null)}>
+          还有 {pendingInterrupt.payload.questions?.length ?? 1} 个问题待回答 · 继续回答
+        </Button> : null}
         {error ? (
           <Alert variant="destructive" className="chat-agent__error"><CircleAlert /><AlertDescription>{error}</AlertDescription></Alert>
         ) : null}
