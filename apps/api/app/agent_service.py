@@ -29,6 +29,7 @@ from .db_models import (
     Generation,
     GenerationStatus,
     Shot,
+    Workflow,
 )
 from .schemas import AgentApprovalRead, AgentInterruptRead
 from .tasks import generate_shot
@@ -395,7 +396,12 @@ def execute_agent_run(run_id: str) -> None:
                     raise CanvasPatchError("画布变更需要明确的镜头上下文")
                 workflow = load_workflow(session, uuid.UUID(str(shot_id)))
                 if workflow is None:
-                    raise CanvasPatchError("当前镜头还没有可修改的画布")
+                    # Agent-first projects intentionally start without the
+                    # legacy fixed nodes. Create an empty workflow lazily when
+                    # the first approved canvas plan is requested.
+                    workflow = Workflow(shot_id=uuid.UUID(str(shot_id)), schema_version="1.0")
+                    session.add(workflow)
+                    session.flush()
                 current_canvas_version = workflow.updated_at.isoformat()
                 run.canvas_version = current_canvas_version
                 patch = compile_canvas_patch(

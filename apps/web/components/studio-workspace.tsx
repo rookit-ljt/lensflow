@@ -285,6 +285,15 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
     void loadWorkspace();
   }, [loadWorkspace]);
 
+  // A brand-new project starts as an Agent-first workspace. Keep the canvas
+  // hidden until the user has an idea to work on and the Agent creates the
+  // first shot.
+  useEffect(() => {
+    if (project && project.shots.length === 0) {
+      setAgentOpen(true);
+    }
+  }, [project]);
+
   const refreshProjectAssets = useCallback(async () => {
     try {
       const assets = await api.listAssets(projectId);
@@ -834,6 +843,33 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "新增镜头失败");
       setSyncState("error");
+    }
+  }, [project]);
+
+  const ensureShotForAgent = useCallback(async (prompt: string) => {
+    if (!project) throw new Error("项目尚未加载");
+    const existing = project.shots[0];
+    if (existing) return existing;
+    setSyncState("saving");
+    try {
+      const shot = await api.createShot(project.id, {
+        sequence_number: 1,
+        title: "第一个镜头",
+        description: "由 Chat Agent 根据创意生成。",
+        visual_prompt: prompt.slice(0, 12000),
+        duration_seconds: 5,
+      });
+      // Materialize an empty workflow so the first Agent canvas plan does not
+      // reintroduce the legacy shot/prompt/generator starter nodes.
+      await api.getWorkflow(shot.id, { empty: true });
+      setProject((current) => current ? { ...current, shots: [shot, ...current.shots] } : current);
+      setSelectedShotId(shot.id);
+      setSelectedNodeId(null);
+      setSyncState("saved");
+      return shot;
+    } catch (cause) {
+      setSyncState("error");
+      throw cause;
     }
   }, [project]);
 
@@ -1389,7 +1425,7 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
           </Card>
         </section>
       ) : (
-        <section className="studio-body">
+        <section className={`studio-body ${selectedShot ? "" : "studio-body--agent-only"}`}>
           {selectedShot ? (
             <CanvasSideRail
               onAddNode={addCanvasNode}
@@ -1406,32 +1442,36 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
             />
           ) : null}
 
-          <ShotRail
-            project={project}
-            selectedShotId={selectedShot?.id}
-            open={shotRailOpen}
-            totalDuration={totalDuration}
-            onClose={() => setShotRailOpen(false)}
-            onAddShot={() => void addShot()}
-            onSelectShot={(shotId) => {
-              setSelectedShotId(shotId);
-              setSelectedNodeId(null);
-            }}
-          />
+          {selectedShot ? (
+            <>
+              <ShotRail
+                project={project}
+                selectedShotId={selectedShot.id}
+                open={shotRailOpen}
+                totalDuration={totalDuration}
+                onClose={() => setShotRailOpen(false)}
+                onAddShot={() => void addShot()}
+                onSelectShot={(shotId) => {
+                  setSelectedShotId(shotId);
+                  setSelectedNodeId(null);
+                }}
+              />
 
-          <AssetLibrary
-            open={assetLibraryOpen}
-            assets={projectAssets}
-            selectedNodeId={selectedNode?.data.kind === "generator" ? selectedNodeId : null}
-            uploading={assetLibraryUploading}
-            deletingAssetId={deletingAssetId}
-            error={assetLibraryError}
-            onClose={() => setAssetLibraryOpen(false)}
-            onUpload={(files) => void uploadProjectAssets(files)}
-            onInsert={selectProjectAsset}
-            onDelete={(asset) => void deleteProjectAsset(asset)}
-            onRefresh={() => void refreshProjectAssets()}
-          />
+              <AssetLibrary
+                open={assetLibraryOpen}
+                assets={projectAssets}
+                selectedNodeId={selectedNode?.data.kind === "generator" ? selectedNodeId : null}
+                uploading={assetLibraryUploading}
+                deletingAssetId={deletingAssetId}
+                error={assetLibraryError}
+                onClose={() => setAssetLibraryOpen(false)}
+                onUpload={(files) => void uploadProjectAssets(files)}
+                onInsert={selectProjectAsset}
+                onDelete={(asset) => void deleteProjectAsset(asset)}
+                onRefresh={() => void refreshProjectAssets()}
+              />
+            </>
+          ) : null}
 
           {selectedShot && workflowReady && selectedNode ? (
             <>
@@ -1519,21 +1559,6 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
                 />
               </section>
 
-              <ChatAgent
-                open={agentOpen}
-                project={project}
-                shot={selectedShot}
-                node={selectedNodeId ? selectedNode : undefined}
-                nodes={nodes}
-                assets={projectAssets}
-                generation={selectedNodeId ? selectedNodeGeneration : selectedGeneration}
-                canvasVersion={workflow?.updated_at}
-                canvasRevision={workflow?.revision}
-                canvasCenter={canvasCenter}
-                canvasSyncing={syncState !== "saved"}
-                onCanvasChanged={reloadActiveCanvas}
-                onClose={() => setAgentOpen(false)}
-              />
             </>
           ) : selectedShot ? (
             <section className="workspace-gate workspace-gate--embedded">
@@ -1541,13 +1566,25 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
               <h1>正在读取画布</h1><p>加载节点、连线和上次保存的视口位置。</p>
               <div className="gate-skeletons gate-skeletons--embedded"><Skeleton /><Skeleton /></div>
             </section>
-          ) : (
-            <section className="workspace-gate workspace-gate--embedded">
-              <Badge variant="outline" className="gate-index">EMPTY SHOT LIST</Badge>
-              <h1>项目里还没有镜头</h1><p>新增镜头会立即写入数据库。</p>
-              <Button type="button" onClick={() => void addShot()}><Plus />添加第一个镜头</Button>
-            </section>
-          )}
+          ) : null}
+
+          <ChatAgent
+            open={agentOpen}
+            project={project}
+            shot={selectedShot}
+            node={selectedNodeId ? selectedNode : undefined}
+            nodes={nodes}
+            assets={projectAssets}
+            generation={selectedNodeId ? selectedNodeGeneration : selectedGeneration}
+            canvasVersion={workflow?.updated_at}
+            canvasRevision={workflow?.revision}
+            canvasCenter={canvasCenter}
+            canvasSyncing={syncState !== "saved"}
+            onEnsureShot={ensureShotForAgent}
+            canClose={Boolean(selectedShot)}
+            onCanvasChanged={reloadActiveCanvas}
+            onClose={() => setAgentOpen(false)}
+          />
         </section>
       )}
     </main>

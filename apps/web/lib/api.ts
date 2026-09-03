@@ -501,8 +501,8 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
-  getWorkflow: (shotId: string) =>
-    request<Workflow>(`/api/shots/${shotId}/workflow`),
+  getWorkflow: (shotId: string, options?: { empty?: boolean }) =>
+    request<Workflow>(`/api/shots/${shotId}/workflow${options?.empty ? "?empty=true" : ""}`),
   saveWorkflow: (shotId: string, payload: WorkflowWrite) =>
     request<Workflow>(`/api/shots/${shotId}/workflow`, {
       method: "PUT",

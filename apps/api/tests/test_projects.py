@@ -128,6 +128,7 @@ def test_create_project_and_shot() -> None:
             f"/api/shots/{shot_id}/workflow", json=revisioned_payload
         )
         assert revisioned_save.status_code == 200
+
         revisioned = revisioned_save.json()
         assert revisioned["revision"] == saved["revision"] + 1
 
@@ -150,3 +151,37 @@ def test_create_project_and_shot() -> None:
     assert detail["name"] == "沿海失踪案"
     assert detail["shots"][0]["title"] == "海岸公路"
     assert detail["shots"][0]["duration_seconds"] == 6
+
+
+def test_agent_first_workflow_can_start_empty() -> None:
+    with authenticated_client() as client:
+        project_response = client.post(
+            "/api/projects",
+            json={"name": "Agent 首次创作", "description": ""},
+        )
+        assert project_response.status_code == 201
+        project_id = project_response.json()["id"]
+        shot_response = client.post(
+            f"/api/projects/{project_id}/shots",
+            json={
+                "sequence_number": 1,
+                "title": "第一个镜头",
+                "description": "",
+                "visual_prompt": "一只猫在窗边看雪。",
+                "duration_seconds": 5,
+            },
+        )
+        assert shot_response.status_code == 201
+        shot_id = shot_response.json()["id"]
+
+        workflow_response = client.get(f"/api/shots/{shot_id}/workflow?empty=true")
+        assert workflow_response.status_code == 200
+        workflow = workflow_response.json()
+        assert workflow["nodes"] == []
+        assert workflow["edges"] == []
+
+        # Once materialized, a regular read keeps the intentionally empty
+        # workflow instead of applying the legacy starter template.
+        regular_response = client.get(f"/api/shots/{shot_id}/workflow")
+        assert regular_response.status_code == 200
+        assert regular_response.json()["nodes"] == []

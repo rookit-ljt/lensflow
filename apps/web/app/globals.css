@@ -1888,6 +1888,25 @@ select {
   min-height: 620px;
 }
 
+/* New projects are intentionally Agent-first: keep the canvas and rails out
+   of the way until the first shot exists. */
+.studio-body--agent-only {
+  display: block;
+  position: relative;
+}
+
+.studio-body--agent-only .chat-agent {
+  top: 28px;
+  right: 50%;
+  bottom: 28px;
+  width: min(760px, calc(100vw - 48px));
+  transform: translate(50%, 24px);
+}
+
+.studio-body--agent-only .chat-agent.is-open {
+  transform: translate(50%, 0);
+}
+
 .shot-rail,
 .inspector {
   background: var(--ink-900);
@@ -3613,6 +3632,26 @@ body {
   top: 7px;
   left: 50%;
   transform: translateX(-50%);
+}
+
+.view-switch--agent-only {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 40px;
+  padding: 0 16px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 22px;
+  background: #1c1c1e;
+  color: #f0f0f1;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 7px 24px rgba(0, 0, 0, 0.28);
+}
+
+.view-switch--agent-only svg {
+  width: 15px;
+  height: 15px;
 }
 
 .view-switch [data-slot="tabs-list"] {

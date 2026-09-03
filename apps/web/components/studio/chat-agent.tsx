@@ -46,7 +46,7 @@ import {
 type ChatAgentProps = {
   open: boolean;
   project: Project;
-  shot: Shot;
+  shot: Shot | null;
   node?: StudioFlowNode;
   nodes?: StudioFlowNode[];
   assets?: ProjectAsset[];
@@ -55,6 +55,8 @@ type ChatAgentProps = {
   canvasRevision?: number;
   canvasCenter?: { x: number; y: number };
   canvasSyncing?: boolean;
+  onEnsureShot?: (prompt: string) => Promise<Shot>;
+  canClose?: boolean;
   onCanvasChanged: () => void | Promise<void>;
   onClose: () => void;
 };
@@ -250,6 +252,8 @@ export function ChatAgent({
   canvasRevision,
   canvasCenter,
   canvasSyncing = false,
+  onEnsureShot,
+  canClose = true,
   onCanvasChanged,
   onClose,
 }: ChatAgentProps) {
@@ -323,7 +327,7 @@ export function ChatAgent({
     setError(null);
     try {
       const next = await api.createAgentThread(project.id, {
-        title: `${shot.title} · 新对话`,
+        title: `${shot?.title ?? project.name} · 新对话`,
       });
       setThread(next);
       setMessages([]);
@@ -336,7 +340,7 @@ export function ChatAgent({
     } finally {
       setLoading(false);
     }
-  }, [activeRun, pendingApproval, pendingInterrupt, project.id, shot.title]);
+  }, [activeRun, pendingApproval, pendingInterrupt, project.id, project.name, shot?.title]);
 
   const finishRun = useCallback(async (runId: string) => {
     eventSourceRef.current?.close();
@@ -469,11 +473,12 @@ export function ChatAgent({
     };
     setMessages((current) => [...current, optimisticMessage]);
     try {
+      const contextShot = shot ?? (onEnsureShot ? await onEnsureShot(content) : null);
       const run = await api.createAgentRun(thread.id, {
         message: content,
         context: {
           project_id: project.id,
-          shot_id: shot.id,
+          ...(contextShot ? { shot_id: contextShot.id } : {}),
           selected_node_ids: node ? [node.id] : [],
           canvas_version: canvasVersion,
           canvas_revision: canvasRevision,
@@ -492,7 +497,7 @@ export function ChatAgent({
       setDraft(content);
       setError(cause instanceof Error ? cause.message : "消息发送失败");
     }
-  }, [activeRun, canvasCenter, canvasRevision, canvasSyncing, canvasVersion, draft, draftMentions, node, pendingApproval, pendingInterrupt, project.id, selectedSkill, shot.id, subscribeToRun, thread]);
+  }, [activeRun, canvasCenter, canvasRevision, canvasSyncing, canvasVersion, draft, draftMentions, node, onEnsureShot, pendingApproval, pendingInterrupt, project.id, selectedSkill, shot, subscribeToRun, thread]);
 
   const cancelRun = useCallback(async () => {
     if (!activeRun) return;
@@ -505,10 +510,10 @@ export function ChatAgent({
   }, [activeRun]);
 
   const quickPrompts = useMemo(() => [
-    node ? "分析当前节点并给出优化建议" : "分析当前镜头的创作方向",
-    "为当前镜头生成角色及场景设计",
-    node ? "生成当前节点" : "优化当前镜头提示词",
-  ], [node]);
+    node ? "分析当前节点并给出优化建议" : shot ? "分析当前镜头的创作方向" : "帮我把这个创意拆成视频镜头",
+    shot ? "为当前镜头生成角色及场景设计" : "从我的想法开始制作视频",
+    node ? "生成当前节点" : shot ? "优化当前镜头提示词" : "先帮我完善视频创意",
+  ], [node, shot]);
 
   const resumeInterrupt = useCallback(async () => {
     if (!pendingInterrupt || !selectedOptionId || interruptLoading || !thread) return;
@@ -620,7 +625,7 @@ export function ChatAgent({
         <div className="chat-agent__header-actions">
           <Button type="button" variant="ghost" size="icon" onClick={() => setSkillOpen(true)} aria-label="打开 Skill 库"><Sparkles /></Button>
           <Button type="button" variant="ghost" size="icon" onClick={() => void startNewThread()} disabled={Boolean(activeRun || pendingApproval || pendingInterrupt)} aria-label="新建对话"><MessageSquarePlus /></Button>
-          <Button type="button" variant="ghost" size="icon" onClick={onClose} aria-label="关闭 Chat Agent"><X /></Button>
+          {canClose ? <Button type="button" variant="ghost" size="icon" onClick={onClose} aria-label="关闭 Chat Agent"><X /></Button> : null}
         </div>
       </header>
 
@@ -633,8 +638,8 @@ export function ChatAgent({
       />
 
       <section className="chat-agent__context" aria-label="当前上下文">
-        <div className="chat-agent__context-heading"><span>SCENE {String(shot.sequence_number).padStart(2, "0")}</span><Badge variant="outline">{modelLabel}</Badge></div>
-        <strong>{shot.title}</strong>
+        <div className="chat-agent__context-heading"><span>{shot ? `SCENE ${String(shot.sequence_number).padStart(2, "0")}` : "PROJECT"}</span><Badge variant="outline">{modelLabel}</Badge></div>
+        <strong>{shot?.title ?? "从一个想法开始"}</strong>
         <div className="chat-agent__context-tags">
           <span>{project.name}</span>
           {node ? <span>{node.data.title}</span> : <span>未选中节点</span>}
@@ -742,7 +747,7 @@ export function ChatAgent({
             onMentionsChange={setDraftMentions}
             onChange={setDraft}
             onKeyDown={handleKeyDown}
-            placeholder={node ? `修改「${node.data.title}」…` : "告诉 Agent 下一步…"}
+            placeholder={node ? `修改「${node.data.title}」…` : shot ? "告诉 Agent 下一步…" : "描述你想制作的视频…"}
             disabled={!thread || canvasSyncing || Boolean(activeRun || pendingApproval || pendingInterrupt)}
             rows={3}
           />

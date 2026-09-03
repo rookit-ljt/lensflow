@@ -27,13 +27,6 @@ type ProjectDashboardProps = {
   onLogout: () => Promise<void>;
 };
 
-const templates = {
-  text: { label: "文字生成", title: "开场镜头", description: "用一句话描述你想看到的画面。", prompt: "电影感开场，镜头缓慢推进，主体清晰，光线自然。" },
-  image: { label: "图片生视频", title: "图片动画", description: "上传一张图片，让画面动起来。", prompt: "保持主体外观一致，动作自然，镜头平稳移动。" },
-  keyframe: { label: "首尾帧视频", title: "首尾帧过渡", description: "用两张图片控制开始和结束画面。", prompt: "镜头平滑连接首帧与尾帧，保持主体和风格一致。" },
-} as const;
-type TemplateKey = keyof typeof templates;
-
 function formatProjectDate(value: string): string {
   return new Intl.DateTimeFormat("zh-CN", {
     month: "short",
@@ -47,7 +40,6 @@ export function ProjectDashboard({ currentUser, onLogout }: ProjectDashboardProp
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [projectName, setProjectName] = useState("");
   const [description, setDescription] = useState("");
-  const [template, setTemplate] = useState<TemplateKey>("text");
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -76,14 +68,6 @@ export function ProjectDashboard({ currentUser, onLogout }: ProjectDashboardProp
     setError(null);
     try {
       const project = await api.createProject({ name, description: description.trim() });
-      const selectedTemplate = templates[template];
-      await api.createShot(project.id, {
-        sequence_number: 1,
-        title: selectedTemplate.title,
-        description: selectedTemplate.description,
-        visual_prompt: selectedTemplate.prompt,
-        duration_seconds: 5,
-      });
       router.push(`/projects/${project.id}`);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "项目创建失败");
@@ -132,14 +116,6 @@ export function ProjectDashboard({ currentUser, onLogout }: ProjectDashboardProp
                   placeholder="项目简介"
                   rows={2}
                 />
-              </div>
-              <div className="dashboard-template-picker" aria-label="创作模板">
-                <Label>从模板开始</Label>
-                <div className="dashboard-template-picker__options">
-                  {(Object.entries(templates) as [TemplateKey, typeof templates[TemplateKey]][]).map(([key, item]) => (
-                    <Button key={key} type="button" variant={template === key ? "default" : "outline"} onClick={() => setTemplate(key)}>{item.label}</Button>
-                  ))}
-                </div>
               </div>
             </div>
             <div className="dashboard-project-creator__footer dashboard-project-creator__footer--minimal">

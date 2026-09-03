@@ -99,7 +99,7 @@ export function StudioHeader({
         </div>
       </div>
 
-      {project ? (
+      {project && selectedShot ? (
         <Tabs
           value={agentOpen ? "agent" : "canvas"}
           onValueChange={(value) => onAgentOpenChange(value === "agent")}
@@ -110,6 +110,8 @@ export function StudioHeader({
             <TabsTrigger value="agent"><Bot />Agent</TabsTrigger>
           </TabsList>
         </Tabs>
+      ) : project ? (
+        <div className="view-switch view-switch--agent-only"><Bot />Agent</div>
       ) : <div className="project-crumbs">连接真实项目数据</div>}
 
       <div className="header-actions">

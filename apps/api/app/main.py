@@ -116,7 +116,12 @@ from .schemas import (
 from .tasks import generate_shot
 from .uploads import detect_image_type, find_uploaded_image, store_uploaded_image
 from .video_frames import extract_last_video_frame
-from .workflows import WorkflowVersionConflict, get_or_create_workflow, replace_workflow
+from .workflows import (
+    WorkflowVersionConflict,
+    get_or_create_workflow,
+    load_workflow,
+    replace_workflow,
+)
 
 
 @asynccontextmanager
@@ -1865,8 +1870,15 @@ def get_workflow(
     shot_id: uuid.UUID,
     session: DatabaseSession,
     user: CurrentUser,
+    empty: bool = Query(False, description="Create an empty workflow for Agent-first projects"),
 ) -> Workflow:
     shot = _owned_shot(session, user, shot_id)
+    if empty and load_workflow(session, shot_id) is None:
+        workflow = Workflow(shot_id=shot.id, schema_version="1.0")
+        session.add(workflow)
+        session.commit()
+        session.refresh(workflow)
+        return workflow
     return get_or_create_workflow(session, shot)
 
 
