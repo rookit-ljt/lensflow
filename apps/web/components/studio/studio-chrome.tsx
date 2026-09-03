@@ -45,6 +45,8 @@ type StudioHeaderProps = {
   onReload: () => void;
   onBackToDashboard: () => void;
   onLogout: () => Promise<void>;
+  onRunShot: () => void;
+  shotRunning?: boolean;
 };
 
 export function StudioHeader({
@@ -60,6 +62,8 @@ export function StudioHeader({
   onReload,
   onBackToDashboard,
   onLogout,
+  onRunShot,
+  shotRunning = false,
 }: StudioHeaderProps) {
   return (
     <header className="studio-header">
@@ -70,6 +74,11 @@ export function StudioHeader({
           </TooltipTrigger>
           <TooltipContent>返回项目首页</TooltipContent>
         </Tooltip>
+        {selectedShot ? (
+          <Button type="button" variant="outline" size="sm" onClick={onRunShot} disabled={shotRunning}>
+            {shotRunning ? "运行中…" : "运行镜头"}
+          </Button>
+        ) : null}
         <span className="brand-mark">S</span>
         <div className="story-lockup">
           <span className="brand-name">{project?.name ?? "AI Video Studio"}</span>

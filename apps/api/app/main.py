@@ -1556,6 +1556,75 @@ def create_generation(
     return _enqueue_generation(session, generation, background_tasks)
 
 
+@app.post(
+    "/api/shots/{shot_id}/run",
+    response_model=list[GenerationRead],
+    status_code=status.HTTP_202_ACCEPTED,
+    tags=["generations"],
+)
+def run_shot_workflow(
+    shot_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    session: DatabaseSession,
+    user: CurrentUser,
+) -> list[Generation]:
+    """Run generator nodes in workflow order for the local eager runner."""
+    shot = _owned_shot(session, user, shot_id)
+    if not settings.celery_task_always_eager:
+        raise HTTPException(status_code=409, detail="整条镜头运行目前需要 CELERY_TASK_ALWAYS_EAGER=true")
+    workflow = get_or_create_workflow(session, shot)
+    nodes = {node.id: node for node in workflow.nodes}
+    incoming: dict[uuid.UUID, list[uuid.UUID]] = {node_id: [] for node_id in nodes}
+    outgoing: dict[uuid.UUID, list[uuid.UUID]] = {node_id: [] for node_id in nodes}
+    for edge in workflow.edges:
+        if edge.source in nodes and edge.target in nodes:
+            incoming[edge.target].append(edge.source)
+            outgoing[edge.source].append(edge.target)
+    ready = [node_id for node_id, sources in incoming.items() if not sources]
+    ordered: list[uuid.UUID] = []
+    while ready:
+        current = ready.pop(0)
+        ordered.append(current)
+        for target in outgoing[current]:
+            incoming[target].remove(current)
+            if not incoming[target]:
+                ready.append(target)
+    if len(ordered) != len(nodes):
+        raise HTTPException(status_code=409, detail="工作流存在循环连线，无法运行")
+
+    results: list[Generation] = []
+    for node_id in ordered:
+        node = nodes[node_id]
+        if node.type != "generator":
+            continue
+        mode = str(node.config.get("mode") or "").strip()
+        if mode not in {"text", "image", "video"}:
+            continue
+        provider = str(node.config.get("provider") or "mock")
+        if provider not in {"mock", "openai_compatible", "ark_seedream", "google_genai", "qwen", "local_h3"}:
+            provider = "mock"
+        prompt = str(node.config.get("prompt") or shot.visual_prompt or "").strip()
+        if not prompt:
+            continue
+        payload = GenerationCreate(
+            provider=provider,
+            kind=mode,
+            node_id=node.id,
+            prompt=prompt,
+            model=str(node.config.get("model") or "") or None,
+            temperature=float(node.config.get("temperature", 0.7)),
+            max_tokens=int(node.config.get("max_tokens", 2400)),
+            parameters={
+                "context_source_node_ids": [str(source_id) for source_id in outgoing if node_id in outgoing[source_id]],
+                **{key: value for key, value in node.config.items() if key not in {"mode", "provider", "model", "prompt"}},
+            },
+        )
+        results.append(create_generation(shot_id, payload, background_tasks, session, user))
+    if not results:
+        raise HTTPException(status_code=409, detail="当前镜头没有可运行的生成节点")
+    return results
+
+
 @app.get(
     "/api/shots/{shot_id}/generations",
     response_model=list[GenerationRead],

@@ -455,6 +455,8 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  runShot: (shotId: string) =>
+    request<Generation[]>(`/api/shots/${shotId}/run`, { method: "POST" }),
   listGenerations: (shotId: string) =>
     request<Generation[]>(`/api/shots/${shotId}/generations`),
   getGeneration: (generationId: string) =>

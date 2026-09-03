@@ -207,6 +207,7 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
   const [assetLibraryError, setAssetLibraryError] = useState<string | null>(null);
   const [agentOpen, setAgentOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [shotRunning, setShotRunning] = useState(false);
   const [pendingNodeId, setPendingNodeId] = useState<string | null>(null);
   const [uploadingNodeId, setUploadingNodeId] = useState<string | null>(null);
   const [extractingFrameNodeId, setExtractingFrameNodeId] = useState<string | null>(null);
@@ -1038,6 +1039,30 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
     }
   }, [selectedNodeGeneration]);
 
+  const runCurrentShot = useCallback(async () => {
+    if (!selectedShot || shotRunning) return;
+    setShotRunning(true);
+    setError(null);
+    try {
+      const results = await api.runShot(selectedShot.id);
+      setGenerationHistory((current) => ({
+        ...current,
+        [selectedShot.id]: [
+          ...results,
+          ...(current[selectedShot.id] ?? []).filter((item) => !results.some((result) => result.id === item.id)),
+        ],
+      }));
+      const latest = results[results.length - 1];
+      if (latest) setGenerations((current) => ({ ...current, [selectedShot.id]: latest }));
+      await loadWorkspace();
+      await refreshProjectAssets();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "镜头运行失败");
+    } finally {
+      setShotRunning(false);
+    }
+  }, [loadWorkspace, refreshProjectAssets, selectedShot, shotRunning]);
+
   const cancelSelectedGeneration = useCallback(async () => {
     if (!selectedNodeGeneration || !["queued", "running"].includes(selectedNodeGeneration.status)) return;
     setError(null);
@@ -1317,6 +1342,8 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
         onReload={() => void loadWorkspace()}
         onBackToDashboard={() => router.push("/dashboard")}
         onLogout={onLogout}
+        onRunShot={() => void runCurrentShot()}
+        shotRunning={shotRunning}
       />
 
       <LlmSettings
