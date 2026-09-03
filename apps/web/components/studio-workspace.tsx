@@ -335,7 +335,9 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
     ? generationHistory[activeShotId] ?? emptyGenerationHistory
     : emptyGenerationHistory;
   const selectedNodeGeneration = selectedNodeId
-    ? shotGenerationHistory.find((item) => item.node_id === selectedNodeId)
+    ? (selectedGeneration?.node_id === selectedNodeId
+      ? selectedGeneration
+      : shotGenerationHistory.find((item) => item.node_id === selectedNodeId))
     : undefined;
   const selectedContexts = useMemo(() => {
     if (!selectedNodeId || !selectedShot) return [];
@@ -1460,6 +1462,7 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
                     <NodeComposer
                       node={selectedNode}
                       generation={selectedNodeGeneration}
+                      generationHistory={shotGenerationHistory.filter((item) => item.node_id === selectedNodeId)}
                       providers={providerCapabilities}
                       assets={projectAssets}
                       contexts={selectedContexts}
@@ -1472,6 +1475,12 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
                       onRun={() => void executeGeneration()}
                       onRetry={() => void retrySelectedGeneration()}
                       onCancel={() => void cancelSelectedGeneration()}
+                      onSelectGeneration={(generationId) => {
+                        const selected = shotGenerationHistory.find((item) => item.id === generationId);
+                        if (selected && selectedShot) {
+                          setGenerations((current) => ({ ...current, [selectedShot.id]: selected }));
+                        }
+                      }}
                       onDelete={deleteSelectedNode}
                     />
                   ) : null}

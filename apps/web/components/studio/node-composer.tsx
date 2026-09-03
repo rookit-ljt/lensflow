@@ -70,6 +70,7 @@ import type {
 type NodeComposerProps = {
   node: StudioFlowNode;
   generation?: Generation;
+  generationHistory?: Generation[];
   providers: ProviderCapability[];
   assets: ProjectAsset[];
   contexts: ContextReference[];
@@ -83,6 +84,7 @@ type NodeComposerProps = {
   onRetry?: () => void;
   onCancel?: () => void;
   onDelete: () => void;
+  onSelectGeneration?: (generationId: string) => void;
 };
 
 type ComposerSelectOption = {
@@ -120,7 +122,7 @@ function ComposerSelect({ label, value, options, wide = false, disabled = false,
   );
 }
 
-export function NodeComposer({ node, generation, providers, assets, contexts, busy: busyProp = false, uploading = false, style, onUpdate, onUpload, onSelectAsset, onRun, onRetry, onCancel, onDelete }: NodeComposerProps) {
+export function NodeComposer({ node, generation, generationHistory = [], providers, assets, contexts, busy: busyProp = false, uploading = false, style, onUpdate, onUpload, onSelectAsset, onRun, onRetry, onCancel, onDelete, onSelectGeneration }: NodeComposerProps) {
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const config = node.data.config;
   const mode = creationMode(config);
@@ -820,6 +822,19 @@ export function NodeComposer({ node, generation, providers, assets, contexts, bu
                 </TooltipContent>
               </Tooltip>
             </div>
+
+            {generationHistory.length > 1 ? (
+              <ComposerSelect
+                label="版本"
+                value={generation?.id ?? generationHistory[0]?.id ?? ""}
+                options={generationHistory.map((item, index) => ({
+                  value: item.id,
+                  label: `第 ${generationHistory.length - index} 次 · ${item.status === "succeeded" ? "完成" : item.status === "failed" ? "失败" : "处理中"}`,
+                }))}
+                disabled={busy}
+                onValueChange={(value) => onSelectGeneration?.(value)}
+              />
+            ) : null}
 
             {(mode === "image" || mode === "video") ? (
               <Collapsible className="composer-advanced">
