@@ -257,6 +257,7 @@ export function ChatAgent({
   onCanvasChanged,
   onClose,
 }: ChatAgentProps) {
+  const projectFirst = !shot;
   const [thread, setThread] = useState<AgentThread | null>(null);
   const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [draft, setDraft] = useState("");
@@ -616,8 +617,8 @@ export function ChatAgent({
   };
 
   return (
-    <aside className={`chat-agent ${open ? "is-open" : ""}`} aria-label="Chat Agent" aria-hidden={!open}>
-      <header className="chat-agent__header">
+    <aside className={`chat-agent ${projectFirst ? "chat-agent--project-first" : ""} ${open ? "is-open" : ""}`} aria-label="Chat Agent" aria-hidden={!open}>
+      {!projectFirst ? <header className="chat-agent__header">
         <div className="chat-agent__identity">
           <span className="chat-agent__mark"><Bot /></span>
           <div><span>CHAT AGENT</span><h2>创作 Agent</h2></div>
@@ -627,7 +628,7 @@ export function ChatAgent({
           <Button type="button" variant="ghost" size="icon" onClick={() => void startNewThread()} disabled={Boolean(activeRun || pendingApproval || pendingInterrupt)} aria-label="新建对话"><MessageSquarePlus /></Button>
           {canClose ? <Button type="button" variant="ghost" size="icon" onClick={onClose} aria-label="关闭 Chat Agent"><X /></Button> : null}
         </div>
-      </header>
+      </header> : null}
 
       <SkillLibrary
         open={skillOpen}
@@ -637,7 +638,7 @@ export function ChatAgent({
         onClose={() => setSkillOpen(false)}
       />
 
-      <section className="chat-agent__context" aria-label="当前上下文">
+      {!projectFirst ? <section className="chat-agent__context" aria-label="当前上下文">
         <div className="chat-agent__context-heading"><span>{shot ? `SCENE ${String(shot.sequence_number).padStart(2, "0")}` : "PROJECT"}</span><Badge variant="outline">{modelLabel}</Badge></div>
         <strong>{shot?.title ?? "从一个想法开始"}</strong>
         <div className="chat-agent__context-tags">
@@ -645,9 +646,9 @@ export function ChatAgent({
           {node ? <span>{node.data.title}</span> : <span>未选中节点</span>}
           {generation ? <span>{generation.status}</span> : null}
         </div>
-      </section>
+      </section> : null}
 
-      <ScrollArea className="chat-agent__messages">
+      {!projectFirst ? <ScrollArea className="chat-agent__messages">
         <div className="chat-agent__message-list">
           {loading ? (
             <div className="chat-agent__loading"><LoaderCircle />正在恢复对话</div>
@@ -715,7 +716,7 @@ export function ChatAgent({
           ) : null}
           <div ref={endRef} />
         </div>
-      </ScrollArea>
+      </ScrollArea> : null}
 
       <div className="chat-agent__footer">
         {error ? (

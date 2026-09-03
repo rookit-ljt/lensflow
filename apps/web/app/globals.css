@@ -4918,6 +4918,58 @@ body {
   transform: translateX(0);
 }
 
+/* Empty projects use a compact, Runway-like prompt surface instead of the
+   full conversation inspector. The full Agent history appears after the
+   first shot is created. */
+.chat-agent--project-first {
+  top: 50%;
+  right: 50%;
+  bottom: auto;
+  height: auto;
+  max-height: calc(100% - 56px);
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
+  transform: translate(50%, calc(-50% + 24px));
+}
+
+.chat-agent--project-first.is-open {
+  transform: translate(50%, -50%);
+}
+
+.chat-agent--project-first .chat-agent__footer {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.chat-agent--project-first .chat-agent__composer {
+  min-height: 220px;
+  padding: 22px 24px 16px;
+  border-color: rgba(255, 255, 255, 0.14);
+  border-radius: 22px;
+  background: rgba(28, 28, 31, 0.97);
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.42);
+}
+
+.chat-agent--project-first .chat-agent__composer [data-slot="textarea"] {
+  min-height: 132px;
+  font-size: 16px;
+}
+
+.chat-agent--project-first .chat-agent__quick-prompts {
+  padding: 14px 2px 0;
+}
+
+.chat-agent--project-first .chat-agent__quick-prompts [data-slot="button"] {
+  height: 38px;
+  padding-inline: 16px;
+  border-radius: 999px;
+  background: rgba(30, 30, 33, 0.94);
+  font-size: 12px;
+}
+
 .chat-agent__header,
 .chat-agent__context-heading,
 .chat-agent__composer-meta {
