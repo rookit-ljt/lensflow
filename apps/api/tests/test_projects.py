@@ -2,6 +2,9 @@ import uuid
 
 from conftest import authenticated_client
 
+from app.database import SessionLocal
+from app.db_models import AgentInterrupt, AgentInterruptStatus, AgentRun, AgentRunStatus
+
 
 def test_create_project_and_shot() -> None:
     with authenticated_client() as client:
@@ -202,3 +205,61 @@ def test_delete_project_removes_project_and_canvas_data() -> None:
         assert client.get(f"/api/projects/{project['id']}").status_code == 404
         assert client.get(f"/api/shots/{shot['id']}/workflow").status_code == 404
         assert all(item["id"] != project["id"] for item in client.get("/api/projects").json())
+
+
+def test_delete_project_cancels_paused_agent_runs() -> None:
+    """Paused question/approval runs must not make dashboard deletion impossible."""
+    with authenticated_client() as client:
+        project = client.post("/api/projects", json={"name": "可删除的暂停项目"}).json()
+        thread = client.post(
+            f"/api/projects/{project['id']}/agent/threads",
+            json={"title": "等待确认"},
+        ).json()
+        # Create an actual waiting-user run through the public API in mock mode.
+        run = client.post(
+            f"/api/agent/threads/{thread['id']}/runs",
+            json={
+                "message": "请先确认创作方向",
+                "context": {"project_id": project["id"]},
+            },
+        ).json()
+        with SessionLocal() as session:
+            db_run = session.get(AgentRun, uuid.UUID(run["id"]))
+            db_run.status = AgentRunStatus.WAITING_USER
+            interrupt = AgentInterrupt(
+                run_id=db_run.id,
+                sequence=1,
+                kind="question_form",
+                decision_key="test",
+                title="确认方向",
+                payload={"questions": []},
+                status=AgentInterruptStatus.PENDING,
+            )
+            session.add(interrupt)
+            session.commit()
+            run_id = db_run.id
+
+        deleted = client.delete(f"/api/projects/{project['id']}")
+        assert deleted.status_code == 204, deleted.text
+        with SessionLocal() as session:
+            assert session.get(AgentRun, run_id) is None
+
+
+def test_delete_project_still_blocks_provider_work() -> None:
+    with authenticated_client() as client:
+        project = client.post("/api/projects", json={"name": "生成中的项目"}).json()
+        thread = client.post(
+            f"/api/projects/{project['id']}/agent/threads",
+            json={"title": "生成中"},
+        ).json()
+        run = client.post(
+            f"/api/agent/threads/{thread['id']}/runs",
+            json={"message": "处理", "context": {"project_id": project["id"]}},
+        ).json()
+        with SessionLocal() as session:
+            db_run = session.get(AgentRun, uuid.UUID(run["id"]))
+            db_run.status = AgentRunStatus.THINKING
+            session.commit()
+        blocked = client.delete(f"/api/projects/{project['id']}")
+        assert blocked.status_code == 409
+        assert "任务处理中" in blocked.json()["detail"]

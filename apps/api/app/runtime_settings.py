@@ -13,6 +13,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+from .agent_tools import model_capabilities
 from .config import Settings
 
 ROOT_ENV = Path(__file__).resolve().parents[3] / ".env"
@@ -29,9 +30,15 @@ def settings_view(settings: Settings) -> dict[str, object]:
         "image_provider": settings.image_provider,
         "image_model": settings.image_model,
         "image_base_url": settings.image_base_url,
-        "image_configured": bool(settings.image_api_key.strip() and settings.image_model.strip()),
+        "image_configured": bool(
+            (settings.qwen_api_key if settings.image_provider == "qwen" else settings.image_api_key).strip()
+            and settings.image_model.strip()
+        ),
         "agent_provider": settings.agent_provider,
         "agent_model": settings.agent_model,
+        "agent_tool_protocol": settings.agent_tool_protocol,
+        "agent_capabilities": model_capabilities(settings, settings.agent_provider,
+            settings.agent_model or (settings.qwen_text_model if settings.agent_provider == "qwen" else settings.text_model)),
         "qwen_text_model": settings.qwen_text_model,
         "qwen_text_base_url": settings.qwen_text_base_url,
         "qwen_configured": bool(settings.qwen_api_key.strip() and settings.qwen_text_model.strip()),
@@ -121,10 +128,16 @@ def apply_settings(settings: Settings, *, provider: Literal["qwen", "openai_comp
                 values["AGENT_MODEL"] = settings.agent_model
         else:
             settings.qwen_image_model = model
+            settings.image_provider = "qwen"
+            settings.image_model = model
             values["QWEN_IMAGE_MODEL"] = settings.qwen_image_model
+            values["IMAGE_PROVIDER"] = settings.image_provider
+            values["IMAGE_MODEL"] = settings.image_model
             if base_url:
                 settings.qwen_image_base_url = base_url
+                settings.image_base_url = base_url
                 values["QWEN_IMAGE_BASE_URL"] = settings.qwen_image_base_url
+                values["IMAGE_BASE_URL"] = settings.image_base_url
     elif kind == "text":
         settings.text_provider = "openai_compatible"
         settings.text_api_key = api_key

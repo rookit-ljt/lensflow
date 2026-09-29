@@ -1,4 +1,4 @@
-# AI Video Studio Web Platform
+# LensFlow - AI Video Studio Web Platform
 
 面向浏览器的项目制 AI 视频创作平台。MVP 使用 Product Workflow、FastAPI、Celery/RabbitMQ 和可插拔模型 Provider，不依赖 ComfyUI 核心链路。
 
@@ -90,13 +90,13 @@ Data URL 或本地图片会由 API 服务准备成本机路径，并作为 `firs
 
 ## 图片模型
 
-图片节点支持 `openai_compatible` 和 `ark_seedream` 两类服务端 Provider。配置均放在根目录 `.env`：
+图片节点默认使用通义千问，也兼容 `openai_compatible`、`ark_seedream` 和 Gemini。配置均放在根目录 `.env`：
 
 ```env
-IMAGE_PROVIDER=openai_compatible
-IMAGE_API_KEY=your-key
-IMAGE_BASE_URL=https://api.openai.com/v1
-IMAGE_MODEL=dall-e-2
+IMAGE_PROVIDER=qwen
+QWEN_API_KEY=your-key
+IMAGE_BASE_URL=https://dashscope.aliyuncs.com/api/v1
+IMAGE_MODEL=qwen-image-plus
 IMAGE_REQUEST_TIMEOUT_SECONDS=180
 ```
 

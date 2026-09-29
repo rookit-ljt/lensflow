@@ -38,6 +38,7 @@ export function LlmSettings({ open, onOpenChange, onSaved }: LlmSettingsProps) {
   const [applyToAgent, setApplyToAgent] = useState(true);
   const [loading, setLoading] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [testToolCalling, setTestToolCalling] = useState(false);
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   useEffect(() => {
@@ -103,7 +104,7 @@ export function LlmSettings({ open, onOpenChange, onSaved }: LlmSettingsProps) {
     if (shouldTest) setTesting(true); else setLoading(true);
     try {
       if (shouldTest) {
-        const result = await api.testRuntimeSettings(payload());
+        const result = await api.testRuntimeSettings({ ...payload(), test_tool_calling: testToolCalling });
         setMessage({ type: result.ok ? "success" : "error", text: result.message });
         return;
       }
@@ -157,6 +158,7 @@ export function LlmSettings({ open, onOpenChange, onSaved }: LlmSettingsProps) {
           <div className="space-y-2"><Label htmlFor="settings-base-url">Base URL</Label><Input id="settings-base-url" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder={kind === "text" ? defaults.textBaseUrl : defaults.imageBaseUrl} /></div>
           {kind === "text" ? <label className="flex cursor-pointer items-center gap-2 text-sm text-zinc-300"><input type="checkbox" checked={applyToAgent} onChange={(event) => setApplyToAgent(event.target.checked)} className="size-4 accent-cyan-300" />同步给 Chat Agent 使用</label> : <p className="text-xs text-zinc-500">{kind === "video" ? "填写本地视频服务地址和模型名，保存后视频节点会立即使用。" : "图片模型不会在这里发起真实请求，保存后可在图片节点中验证。"}</p>}
           {message ? <div className={`rounded-xl border p-3 text-sm ${message.type === "success" ? "border-emerald-300/20 bg-emerald-300/10 text-emerald-200" : "border-red-300/20 bg-red-300/10 text-red-200"}`}>{message.text}</div> : null}
+          {kind === "text" ? <label className="flex cursor-pointer items-center gap-2 text-xs text-zinc-400"><input type="checkbox" checked={testToolCalling} disabled={loading || testing} onChange={(event) => setTestToolCalling(event.target.checked)} className="size-4 accent-cyan-300" />测试工具调用（1 次文本请求，会消耗少量 Token）</label> : null}
           <div className="flex flex-col-reverse gap-2 border-t border-white/10 pt-4 sm:flex-row sm:justify-end">
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>取消</Button>
             {kind === "text" ? <Button type="button" variant="outline" disabled={loading || testing} onClick={() => void save(true)}>{testing ? <LoaderCircle className="animate-spin" /> : null}测试连接</Button> : null}

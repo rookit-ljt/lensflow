@@ -285,9 +285,17 @@ export function NodeComposer({ node, generation, generationHistory = [], provide
 
   const selectMode = (nextMode: CreationMode) => {
     const nextDefinition = creationModes[nextMode];
-    const nextProvider = providers.find((provider) => (
-      provider.kind === nextMode && provider.configured && provider.id !== "mock"
-    )) ?? providers.find((provider) => provider.kind === nextMode);
+    // Qwen is the default image model. Keep this preference explicit instead
+    // of relying on the provider API's ordering (which also includes Mock and
+    // any legacy image providers).
+    const nextProvider = nextMode === "image"
+      ? providers.find((provider) => provider.kind === "image" && provider.id === "qwen" && provider.configured)
+        ?? providers.find((provider) => provider.kind === "image" && provider.id === "qwen")
+        ?? providers.find((provider) => provider.kind === nextMode && provider.configured && provider.id !== "mock")
+        ?? providers.find((provider) => provider.kind === nextMode)
+      : providers.find((provider) => (
+        provider.kind === nextMode && provider.configured && provider.id !== "mock"
+      )) ?? providers.find((provider) => provider.kind === nextMode);
     onUpdate({
       mode: nextMode,
       provider: nextProvider?.id,

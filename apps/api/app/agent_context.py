@@ -33,7 +33,10 @@ def build_agent_context(
             f"当前启用 Skill：{skill['name'] if skill else skill_id or '自定义 Skill'}",
             f"Skill 目标：{skill['description'] if skill else '按用户提供的创作规则工作'}",
             f"Skill 运行规则：{skill_prompt or skill['instruction']}",
-            "Skill 只负责规划与提示词质量；任何画布修改和模型调用仍需遵循现有审批流程。",
+            (
+                "Skill 可以根据用户 Prompt 请求创建或更新节点，并把生成 Prompt 交给图片/视频模型流程；"
+                "任何画布修改和模型调用仍需遵循现有计划、审批和任务状态流程。"
+            ),
         ])
     assets = list(
         session.scalars(

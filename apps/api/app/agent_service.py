@@ -14,7 +14,13 @@ from .agent_canvas import (
 )
 from .agent_context import build_agent_context
 from .agent_questions import resolve_question_answers
-from .agent_runtime import AgentState, create_agent_runtime, parse_confirmation_request
+from .agent_runtime import (
+    AgentRuntime,
+    AgentState,
+    create_agent_runtime,
+    parse_confirmation_request,
+)
+from .agent_tools import tool_exchange
 from .config import get_settings
 from .database import SessionLocal
 from .db_models import (
@@ -36,6 +42,40 @@ from .db_models import (
 from .schemas import AgentApprovalRead, AgentInterruptRead
 from .tasks import generate_shot
 from .workflows import load_workflow
+
+
+def build_provider_messages(session: Session, messages: list[AgentMessage]) -> list[dict[str, Any]]:
+    """Expand resolved calls atomically, even when the history window dropped the question.
+
+    UI decision messages remain human-readable; they are not duplicated as user
+    messages in the model transcript. Only persisted server-side interrupts are used.
+    """
+    decisions: dict[uuid.UUID, AgentInterrupt] = {}
+    for message in messages:
+        if message.message_type != "decision":
+            continue
+        raw_id = message.message_metadata.get("interrupt_id")
+        try:
+            interrupt = session.get(AgentInterrupt, uuid.UUID(str(raw_id)))
+        except ValueError:
+            continue
+        if (interrupt is not None and interrupt.run_id == message.run_id
+                and interrupt.status == AgentInterruptStatus.RESOLVED
+                and interrupt.payload.get("protocol") == "tool_calling"):
+            decisions[message.id] = interrupt
+    paired = {str(item.id) for item in decisions.values()}
+    result = []
+    for message in messages:
+        metadata_interrupt = message.message_metadata.get("interrupt", {})
+        if (message.role == AgentMessageRole.ASSISTANT and isinstance(metadata_interrupt, dict)
+                and str(metadata_interrupt.get("id")) in paired):
+            continue
+        if message.id in decisions:
+            interrupt = decisions[message.id]
+            result.extend(tool_exchange(interrupt.payload, interrupt.response))
+        else:
+            result.append({"role": message.role.value, "content": message.content})
+    return result
 
 
 def append_agent_event(
@@ -475,6 +515,11 @@ def create_llm_confirmation_interrupt(
                 "options": [],
             }]
         payload = {"presentation": "question_form", "questions": questions}
+        if request.get("protocol") == "tool_calling":
+            payload.update({key: request[key] for key in (
+                "protocol", "schema_version", "form_id", "tool_name", "tool_call_id",
+                "tool_arguments", "message",
+            )})
     elif not isinstance(payload["options"], list) or not payload["options"]:
         # Keep compatibility with old single/multi-select interrupts that
         # were persisted without options. They are normalized by the pending
@@ -528,6 +573,109 @@ def normalize_pending_interrupt(interrupt: AgentInterrupt) -> bool:
         }],
     }
     return True
+
+
+def prepare_canvas_approval(
+    session: Session,
+    run: AgentRun,
+    thread: AgentThread,
+    runtime: AgentRuntime,
+    state: AgentState,
+) -> None:
+    """The single real planning boundary for chat and resumed question turns.
+
+    No model prose is published here until a non-empty, allowlisted patch and
+    its pending approval are persisted together. This does not execute a node
+    or dispatch any image/video generation job.
+    """
+    session.refresh(run)
+    if run.status != AgentRunStatus.THINKING:
+        return
+    run.status = AgentRunStatus.PLANNING
+    run.current_step = "compile_canvas_patch"
+    append_agent_event(session, run, "plan.started", {"step": run.current_step})
+    session.commit()
+
+    snapshot = run.context_snapshot
+    shot_id = snapshot.get("shot_id")
+    if not shot_id:
+        raise CanvasPatchError("画布变更需要明确的镜头上下文")
+    workflow = load_workflow(session, uuid.UUID(str(shot_id)))
+    if workflow is None:
+        workflow = Workflow(shot_id=uuid.UUID(str(shot_id)), schema_version="1.0")
+        session.add(workflow)
+        session.flush()
+    plan_state = {**state, "status": run.status.value, "current_step": run.current_step}
+    for attempt in range(2):
+        result = runtime.plan(plan_state)
+        # A cancelled run must not publish a late approval, including on repair.
+        session.refresh(run)
+        if run.status != AgentRunStatus.PLANNING:
+            return
+        # Re-read after a slow provider call; compiling is read-only and does
+        # not apply the rejected plan or silently retarget an existing node.
+        session.expire(workflow)
+        current_canvas_version = workflow.updated_at.isoformat()
+        try:
+            patch = compile_canvas_patch(
+                result.actions,
+                workflow=workflow,
+                selected_node_ids=[str(value) for value in snapshot.get("selected_node_ids", [])],
+                base_canvas_version=current_canvas_version,
+                base_revision=workflow.revision,
+                canvas_center=snapshot.get("canvas_center"),
+            )
+            break
+        except CanvasPatchError as exc:
+            if attempt == 1:
+                raise CanvasPatchError(f"画布计划自动修复后仍无效：{exc}。未修改画布，请重试。") from None
+            append_agent_event(session, run, "plan.repair", {"reason": str(exc)})
+            session.commit()
+            plan_state = {**plan_state, "context_text": state["context_text"] + (
+                f"\n上一份计划未通过服务端校验：{exc}。没有执行任何操作。"
+                "请根据原始目标与已提交答案重新输出完整计划，不要要求用户重复回答。"
+                "当前没有选中节点时禁止 update_node_config 或使用 selected 端点；"
+                "如果用户要新建内容，用 create_node 和临时节点 ID；"
+                "如果用户确实要修改但无法确定目标，不能擅自新建或修改其他节点。"
+            )}
+    approval = AgentApproval(
+        run_id=run.id,
+        summary=result.summary[:2000],
+        risk_level=result.risk_level,
+        patch=patch.model_dump(mode="json"),
+    )
+    session.add(approval)
+    run.canvas_version = current_canvas_version
+    run.provider = result.provider
+    run.model = result.model
+    run.status = AgentRunStatus.WAITING_APPROVAL
+    run.current_step = "wait_for_approval"
+    assistant_message = AgentMessage(
+        thread_id=thread.id,
+        run_id=run.id,
+        role=AgentMessageRole.ASSISTANT,
+        content=(
+            f"已准备 {len(patch.operations)} 项画布变更，请在下方审批卡中确认。"
+            "批准后将应用变更并启动符合条件的生成任务，真实模型调用可能产生费用。"
+        ),
+        message_type="approval_request",
+        message_metadata={
+            "provider": result.provider,
+            "model": result.model,
+            "provider_job_id": result.provider_job_id,
+            "partial": False,
+        },
+    )
+    session.add(assistant_message)
+    session.flush()
+    approval_payload = AgentApprovalRead.model_validate(approval).model_dump(mode="json")
+    assistant_message.message_metadata = {
+        **assistant_message.message_metadata, "approval_id": str(approval.id),
+    }
+    _append_completed_message_event(session, run, assistant_message)
+    append_agent_event(session, run, "approval.required", {"approval": approval_payload})
+    thread.updated_at = datetime.now(UTC)
+    session.commit()
 
 
 def execute_agent_run(run_id: str) -> None:
@@ -609,21 +757,40 @@ def execute_agent_run(run_id: str) -> None:
                 for message in ordered_messages
             ]
             answered_titles = []
+            answered_keys = []
+            answered_ids = []
+            # A short follow-up starts a new run, but answers still in this
+            # conversation's history remain authoritative for the same shot.
+            history_run_ids = {message.run_id for message in ordered_messages
+                               if message.message_type == "decision"}
+            history_run_ids.add(run.id)
             for resolved in session.scalars(select(AgentInterrupt).where(
-                AgentInterrupt.run_id == run.id,
+                AgentInterrupt.run_id.in_(history_run_ids),
                 AgentInterrupt.status == AgentInterruptStatus.RESOLVED,
             ).order_by(AgentInterrupt.sequence)):
+                source_run = session.get(AgentRun, resolved.run_id)
+                if (source_run is None or source_run.thread_id != thread.id
+                        or source_run.context_snapshot.get("shot_id") != snapshot.get("shot_id")):
+                    continue
                 response = resolved.response or {}
                 if resolved.kind == "question_form":
+                    answered_ids.extend(str(answer["question_id"]) for answer in response.get("answers", []))
                     answered_titles.extend(
                         str(answer["title"]) for answer in response.get("answers", [])
                     )
+                    if resolved.payload.get("form_id"):
+                        answered_keys.extend(
+                            f"{resolved.payload['form_id']}/{answer['question_id']}"
+                            for answer in response.get("answers", [])
+                        )
                     context_text += "\n已提交的问题答案（跳过不代表同意，不要重新询问）：\n" + str(response.get("label", ""))
             state: AgentState = {
                 "thread_id": str(thread.id),
                 "run_id": str(run.id),
                 "messages": messages,
-                "context": {**snapshot, "answered_question_titles": answered_titles},
+                "provider_messages": build_provider_messages(session, ordered_messages),
+                "context": {**snapshot, "answered_question_titles": answered_titles,
+                            "answered_question_keys": answered_keys, "answered_question_ids": answered_ids},
                 "context_text": context_text,
                 "status": run.status.value,
                 "current_step": run.current_step,
@@ -644,94 +811,39 @@ def execute_agent_run(run_id: str) -> None:
 
             runtime = create_agent_runtime(settings)
             if not is_question_answer and is_canvas_operation_request(latest_message, selected_node_ids, messages):
-                run.status = AgentRunStatus.PLANNING
-                run.current_step = "compile_canvas_patch"
-                append_agent_event(session, run, "plan.started", {"step": run.current_step})
-                session.commit()
-
-                result = runtime.plan(state)
-                shot_id = snapshot.get("shot_id")
-                if not shot_id:
-                    raise CanvasPatchError("画布变更需要明确的镜头上下文")
-                workflow = load_workflow(session, uuid.UUID(str(shot_id)))
-                if workflow is None:
-                    # Agent-first projects intentionally start without the
-                    # legacy fixed nodes. Create an empty workflow lazily when
-                    # the first approved canvas plan is requested.
-                    workflow = Workflow(shot_id=uuid.UUID(str(shot_id)), schema_version="1.0")
-                    session.add(workflow)
-                    session.flush()
-                current_canvas_version = workflow.updated_at.isoformat()
-                run.canvas_version = current_canvas_version
-                patch = compile_canvas_patch(
-                    result.actions,
-                    workflow=workflow,
-                    selected_node_ids=selected_node_ids,
-                    base_canvas_version=current_canvas_version,
-                    base_revision=workflow.revision,
-                    canvas_center=snapshot.get("canvas_center"),
-                )
-                approval = AgentApproval(
-                    run_id=run.id,
-                    summary=result.summary[:2000],
-                    risk_level=result.risk_level,
-                    patch=patch.model_dump(mode="json"),
-                )
-                session.add(approval)
-                run.provider = result.provider
-                run.model = result.model
-                run.status = AgentRunStatus.WAITING_APPROVAL
-                run.current_step = "wait_for_approval"
-                assistant_message = AgentMessage(
-                    thread_id=thread.id,
-                    run_id=run.id,
-                    role=AgentMessageRole.ASSISTANT,
-                    content=result.summary,
-                    message_type="approval_request",
-                    message_metadata={
-                        "provider": result.provider,
-                        "model": result.model,
-                        "provider_job_id": result.provider_job_id,
-                        "partial": False,
-                    },
-                )
-                session.add(assistant_message)
-                session.flush()
-                approval_payload = AgentApprovalRead.model_validate(approval).model_dump(mode="json")
-                append_agent_event(
-                    session,
-                    run,
-                    "message.completed",
-                    {
-                        "message_id": str(assistant_message.id),
-                        "role": assistant_message.role.value,
-                        "content": assistant_message.content,
-                        "message_type": assistant_message.message_type,
-                        "message_metadata": assistant_message.message_metadata,
-                        "created_at": assistant_message.created_at.isoformat()
-                        if assistant_message.created_at
-                        else datetime.now(UTC).isoformat(),
-                    },
-                )
-                append_agent_event(
-                    session,
-                    run,
-                    "approval.required",
-                    {"approval": approval_payload},
-                )
-                session.commit()
+                prepare_canvas_approval(session, run, thread, runtime, state)
                 return
 
-            # The production runtime validates a whole JSON turn before any
+            # The production runtime validates a whole protocol turn before any
             # text is published. Legacy runtime adapters still use stream().
             result = runtime.respond(state) if hasattr(runtime, "respond") else runtime.stream(state)
+            session.refresh(run)
+            if run.status == AgentRunStatus.CANCELLED:
+                return
+            if result.fallback_reason:
+                append_agent_event(session, run, "protocol.fallback", {
+                    "protocol": result.protocol, "fallback_reason": result.fallback_reason,
+                })
+            if result.structured and result.next_action == "plan_canvas":
+                if result.confirmation is not None:
+                    raise CanvasPatchError("还有待答问题，不能同时创建审批计划")
+                # In particular, question answers are allowed to reach this
+                # boundary. They no longer fall through to a chat-only turn.
+                prepare_canvas_approval(session, run, thread, runtime, state)
+                return
             run.provider = result.provider
             run.model = result.model
+            protocol_metadata = {"protocol": result.protocol}
+            if result.tool_call_id:
+                protocol_metadata.update({"tool_call_id": result.tool_call_id, "tool_name": "ask_user",
+                                          "form_id": result.confirmation["form_id"]})
+            if result.fallback_reason:
+                protocol_metadata["fallback_reason"] = result.fallback_reason
             append_agent_event(
                 session,
                 run,
                 "message.started",
-                {"role": "assistant", "provider": result.provider, "model": result.model},
+                {"role": "assistant", "provider": result.provider, "model": result.model, **protocol_metadata},
             )
             session.commit()
 
@@ -812,6 +924,7 @@ def execute_agent_run(run_id: str) -> None:
                     "provider_job_id": result.provider_job_id,
                     "partial": False,
                     "interrupt": interrupt_payload,
+                    **protocol_metadata,
                 }
                 append_agent_event(
                     session,
@@ -828,7 +941,7 @@ def execute_agent_run(run_id: str) -> None:
                         else datetime.now(UTC).isoformat(),
                     },
                 )
-                append_agent_event(session, run, "interrupt.created", {"interrupt": interrupt_payload})
+                append_agent_event(session, run, "interrupt.created", {"interrupt": interrupt_payload, **protocol_metadata})
                 session.commit()
                 return
 
@@ -838,6 +951,7 @@ def execute_agent_run(run_id: str) -> None:
                 "model": result.model,
                 "provider_job_id": result.provider_job_id,
                 "partial": False,
+                **protocol_metadata,
             }
             run.status = AgentRunStatus.COMPLETED
             run.current_step = "completed"
@@ -1068,7 +1182,7 @@ def resolve_agent_interrupt(
     for message in messages:
         metadata_interrupt = message.message_metadata.get("interrupt", {})
         if isinstance(metadata_interrupt, dict) and metadata_interrupt.get("id") == str(interrupt.id):
-            message.message_metadata = {"interrupt": interrupt_payload}
+            message.message_metadata = {**message.message_metadata, "interrupt": interrupt_payload}
             break
 
     if interrupt.kind == "question_form":

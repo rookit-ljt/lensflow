@@ -165,6 +165,8 @@ export interface RuntimeSettings {
   image_configured: boolean;
   agent_provider: string;
   agent_model: string;
+  agent_tool_protocol: "auto" | "tool_calling" | "json";
+  agent_capabilities: { tool_calling?: boolean; structured_output?: boolean };
   qwen_text_model: string;
   qwen_text_base_url: string;
   qwen_configured: boolean;
@@ -191,6 +193,7 @@ export interface RuntimeSettingsTestResult {
   provider: string;
   model: string;
   message: string;
+  tool_calling?: boolean | null;
 }
 
 export type AgentRunStatus =
@@ -332,6 +335,11 @@ export interface AgentInterrupt {
   title: string;
   description: string;
   payload: {
+    protocol?: "json" | "tool_calling";
+    schema_version?: "1.0";
+    form_id?: string;
+    tool_name?: "ask_user";
+    tool_call_id?: string;
     questions?: AgentQuestion[];
     presentation?: string;
     options?: AgentInterruptOption[];
@@ -373,6 +381,7 @@ export interface AgentApprovalDecisionResult {
   approval: AgentApproval;
   canvas_version: string | null;
   canvas_revision: number | null;
+  generations: Generation[];
 }
 
 export interface AgentInterruptResumeResult {
@@ -521,7 +530,7 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(payload),
     }),
-  testRuntimeSettings: (payload: RuntimeSettingsPayload) =>
+  testRuntimeSettings: (payload: RuntimeSettingsPayload & { test_tool_calling?: boolean }) =>
     request<RuntimeSettingsTestResult>("/api/settings/test", {
       method: "POST",
       body: JSON.stringify(payload),
@@ -542,6 +551,8 @@ export const api = {
     }),
   listAgentMessages: (threadId: string) =>
     request<AgentMessage[]>(`/api/agent/threads/${threadId}/messages`),
+  getActiveAgentRun: (threadId: string) =>
+    request<AgentRun | null>(`/api/agent/threads/${threadId}/active-run`),
   getPendingAgentApproval: (threadId: string) =>
     request<AgentApproval | null>(`/api/agent/threads/${threadId}/pending-approval`),
   getPendingAgentInterrupt: (threadId: string) =>

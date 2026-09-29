@@ -1,6 +1,7 @@
 import base64
 import binascii
 import json
+import threading
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -17,6 +18,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from .agent_canvas import CanvasPatchError
+from .agent_runtime import SimpleAgentRuntime
 from .agent_service import (
     append_agent_event,
     execute_agent_run,
@@ -105,6 +107,7 @@ from .schemas import (
     ProviderCapabilityRead,
     RuntimeSettingsRead,
     RuntimeSettingsTestRead,
+    RuntimeSettingsTestRequest,
     RuntimeSettingsUpdate,
     ShotCreate,
     ShotRead,
@@ -124,6 +127,36 @@ from .workflows import (
     replace_workflow,
 )
 
+_AGENT_RUN_CREATE_LOCK = threading.Lock()
+
+
+def _fail_interrupted_generations() -> None:
+    """Fail generations left non-terminal by a previous process death.
+
+    Eager tasks run inside this API process: a restart (--reload, Ctrl-C or a
+    crash) kills in-flight provider calls and orphans queued/running rows.
+    The frontend polls those rows forever because they never reach a terminal
+    state. Worker mode is skipped: a live worker may still own those tasks.
+    """
+    if not settings.celery_task_always_eager:
+        return
+    with SessionLocal() as session:
+        orphans = list(
+            session.scalars(
+                select(Generation).where(
+                    Generation.status.in_([GenerationStatus.QUEUED, GenerationStatus.RUNNING])
+                )
+            )
+        )
+        if not orphans:
+            return
+        for generation in orphans:
+            generation.status = GenerationStatus.FAILED
+            generation.error = "服务重启导致生成中断，请点击重试"
+            if generation.shot is not None:
+                generation.shot.status = ShotStatus.READY
+        session.commit()
+
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
@@ -131,6 +164,7 @@ async def lifespan(_: FastAPI):
     ensure_generation_columns()
     ensure_auth_columns()
     ensure_workflow_columns()
+    _fail_interrupted_generations()
     yield
 
 
@@ -346,6 +380,90 @@ def _enqueue_generation(
     return queued
 
 
+def _enqueue_approved_generations(
+    session: Session,
+    approval: AgentApproval,
+    background_tasks: BackgroundTasks,
+    user: User,
+) -> list[Generation]:
+    """Start generator nodes created or changed by an approved Agent patch.
+
+    Agent approval is the safety boundary for canvas mutation. Once the patch
+    is applied, its generator operations use the same generation endpoint and
+    task runner as manual node execution, so provider validation, progress,
+    cancellation and output assets stay consistent.
+    """
+    patch = approval.patch or {}
+    shot_id = patch.get("shot_id")
+    if not shot_id:
+        return []
+    shot = session.get(Shot, uuid.UUID(str(shot_id)))
+    if shot is None:
+        raise HTTPException(status_code=404, detail="Agent 计划目标镜头不存在")
+    if shot.project.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Agent 计划目标镜头不存在")
+    workflow = load_workflow(session, shot.id)
+    if workflow is None:
+        return []
+    node_ids: list[uuid.UUID] = []
+    for operation in patch.get("operations", []):
+        if not isinstance(operation, dict):
+            continue
+        if operation.get("type") not in {"create_node", "update_node_config", "bind_asset"}:
+            continue
+        raw_id = operation.get("node_id")
+        try:
+            node_id = uuid.UUID(str(raw_id))
+        except (TypeError, ValueError):
+            continue
+        if node_id not in node_ids:
+            node_ids.append(node_id)
+
+    created: list[Generation] = []
+    for node_id in node_ids:
+        node = session.get(WorkflowNode, node_id)
+        if node is None or node.workflow_id != workflow.id or node.type != "generator":
+            continue
+        config = node.config if isinstance(node.config, dict) else {}
+        mode = str(config.get("mode") or "").strip()
+        prompt = str(config.get("prompt") or "").strip()
+        if mode not in {"image", "video", "text"} or not prompt:
+            continue
+        # A node may be mentioned by several operations in one patch. Do not
+        # dispatch a duplicate active job for the same node.
+        active = session.scalar(select(Generation).where(
+            Generation.node_id == str(node.id),
+            Generation.status.in_([GenerationStatus.QUEUED, GenerationStatus.RUNNING]),
+        ))
+        if active is not None:
+            continue
+        default_provider = (
+            "local_h3" if mode == "video"
+            else "qwen" if mode == "image" and settings.qwen_api_key.strip()
+            else settings.image_provider if mode == "image"
+            else settings.text_provider
+        )
+        provider = str(config.get("provider") or default_provider)
+        if provider not in {"mock", "openai_compatible", "ark_seedream", "google_genai", "qwen", "local_h3"}:
+            provider = "mock"
+        parameters = {
+            key: value for key, value in config.items()
+            if key not in {"mode", "provider", "model", "prompt", "temperature", "max_tokens"}
+        }
+        payload = GenerationCreate(
+            provider=provider,
+            kind=mode,
+            node_id=node.id,
+            prompt=prompt,
+            model=str(config.get("model") or "") or None,
+            temperature=float(config.get("temperature", 0.7)),
+            max_tokens=int(config.get("max_tokens", 2400)),
+            parameters=parameters,
+        )
+        created.append(create_generation(shot.id, payload, background_tasks, session, user))
+    return created
+
+
 @app.post(
     "/api/auth/register",
     response_model=UserRead,
@@ -509,15 +627,6 @@ def list_provider_capabilities(_user: CurrentUser) -> list[ProviderCapabilityRea
             requires_api_key=True,
         ),
         ProviderCapabilityRead(
-            id="mock",
-            kind="image",
-            label="Mock 图片流程",
-            configured=True,
-            model="mock-image",
-            models=["mock-image"],
-            requires_api_key=False,
-        ),
-        ProviderCapabilityRead(
             id="local_h3",
             kind="video",
             label="本地 MiniMax H3",
@@ -540,30 +649,50 @@ def list_provider_capabilities(_user: CurrentUser) -> list[ProviderCapabilityRea
         "ark_seedream": "火山方舟 Seedream",
         "google_genai": "Google Gemini 图片模型",
         "openai_compatible": "OpenAI-compatible 图片模型",
+        "qwen": "通义千问图片模型",
     }
-    if settings.image_provider in provider_labels:
+    # Qwen is the default image provider. Do not add a second generic
+    # capability for it below; the dedicated entry includes all supported
+    # Qwen image models and should be shown only once in the dropdown.
+    if settings.image_provider in provider_labels and settings.image_provider != "qwen":
         capabilities.append(
             ProviderCapabilityRead(
                 id=settings.image_provider,
                 kind="image",
                 label=provider_labels[settings.image_provider],
-                configured=bool(settings.image_api_key.strip() and settings.image_model.strip()),
+                configured=bool(
+                    (settings.qwen_api_key if settings.image_provider == "qwen" else settings.image_api_key).strip()
+                    and settings.image_model.strip()
+                ),
                 model=settings.image_model,
                 models=[settings.image_model] if settings.image_model else [],
                 requires_api_key=True,
             )
         )
-    capabilities.append(
-        ProviderCapabilityRead(
-            id="qwen",
-            kind="image",
-            label="阿里云百炼 · 千问图片",
-            configured=bool(settings.qwen_api_key.strip() and settings.qwen_image_model.strip()),
-            model=settings.qwen_image_model,
-            models=list(dict.fromkeys((settings.qwen_image_model, *QWEN_IMAGE_MODELS))),
-            requires_api_key=True,
-        )
+    qwen_image = ProviderCapabilityRead(
+        id="qwen",
+        kind="image",
+        label="阿里云百炼 · 千问图片",
+        configured=bool(settings.qwen_api_key.strip() and settings.qwen_image_model.strip()),
+        model=settings.qwen_image_model,
+        models=list(dict.fromkeys((settings.qwen_image_model, *QWEN_IMAGE_MODELS))),
+        requires_api_key=True,
     )
+    mock_image = ProviderCapabilityRead(
+        id="mock",
+        kind="image",
+        label="Mock 图片流程",
+        configured=True,
+        model="mock-image",
+        models=["mock-image"],
+        requires_api_key=False,
+    )
+    # Put a configured Qwen capability first so a newly opened image model
+    # selector presents the real default before the Mock fallback.
+    if qwen_image.configured:
+        capabilities.extend((qwen_image, mock_image))
+    else:
+        capabilities.extend((mock_image, qwen_image))
     return capabilities
 
 
@@ -589,7 +718,7 @@ def update_runtime_settings(payload: RuntimeSettingsUpdate, _user: CurrentUser) 
 
 
 @app.post("/api/settings/test", response_model=RuntimeSettingsTestRead, tags=["settings"])
-def test_runtime_settings(payload: RuntimeSettingsUpdate, _user: CurrentUser) -> RuntimeSettingsTestRead:
+def test_runtime_settings(payload: RuntimeSettingsTestRequest, _user: CurrentUser) -> RuntimeSettingsTestRead:
     _ensure_runtime_settings_enabled()
     if payload.kind != "text":
         return RuntimeSettingsTestRead(
@@ -619,6 +748,15 @@ def test_runtime_settings(payload: RuntimeSettingsUpdate, _user: CurrentUser) ->
             if base_url:
                 temporary.text_base_url = base_url
             provider = OpenAICompatibleTextProvider(temporary)
+        if payload.test_tool_calling:
+            temporary.agent_provider = payload.provider
+            temporary.agent_model = model
+            temporary.agent_temperature = 0
+            temporary.agent_max_tokens = 1600
+            SimpleAgentRuntime(temporary).test_tool_calling()
+            return RuntimeSettingsTestRead(ok=True, provider=payload.provider, model=model,
+                message="工具调用测试成功：ask_user 参数校验通过。未创建问题卡、节点或生成任务。",
+                tool_calling=True)
         provider.generate(
             GenerationRequest(
                 generation_id=f"settings-test-{uuid.uuid4().hex}",
@@ -633,7 +771,8 @@ def test_runtime_settings(payload: RuntimeSettingsUpdate, _user: CurrentUser) ->
         )
     except (RuntimeError, ValueError, httpx.HTTPError) as exc:
         safe_message = str(exc).replace(api_key, "***") if api_key else str(exc)
-        return RuntimeSettingsTestRead(ok=False, provider=payload.provider, model=payload.model, message=safe_message)
+        return RuntimeSettingsTestRead(ok=False, provider=payload.provider, model=payload.model,
+            message=safe_message, tool_calling=False if payload.test_tool_calling else None)
     return RuntimeSettingsTestRead(ok=True, provider=payload.provider, model=payload.model, message="连接成功，模型可以正常响应。")
 
 
@@ -848,6 +987,40 @@ def delete_project(
 ) -> Response:
     """Permanently remove a project and all of its owned production data."""
     project = _owned_project(session, user, project_id)
+
+    # A waiting-user/approval Agent run is paused, not doing provider work.
+    # The dashboard has no separate Agent panel from which these runs can be
+    # cancelled, so leaving them in the active set made project deletion
+    # impossible forever. Cancel these safe-to-stop states as part of the
+    # already-confirmed destructive project deletion. Runs which may still be
+    # executing a provider request remain protected below.
+    paused_runs = list(
+        session.scalars(
+            select(AgentRun)
+            .join(AgentThread, AgentThread.id == AgentRun.thread_id)
+            .where(
+                AgentThread.project_id == project_id,
+                AgentRun.status.in_([
+                    AgentRunStatus.WAITING_USER,
+                    AgentRunStatus.WAITING_APPROVAL,
+                ]),
+            )
+        )
+    )
+    now = datetime.now(UTC)
+    for run in paused_runs:
+        run.status = AgentRunStatus.CANCELLED
+        run.current_step = "cancelled_by_project_delete"
+        run.completed_at = now
+        if run.approval is not None and run.approval.status == AgentApprovalStatus.PENDING:
+            run.approval.status = AgentApprovalStatus.REJECTED
+            run.approval.decision_feedback = "project_deleted"
+            run.approval.resolved_at = now
+        for interrupt in run.interrupts:
+            if interrupt.status == AgentInterruptStatus.PENDING:
+                interrupt.status = AgentInterruptStatus.CANCELLED
+                interrupt.resolved_at = now
+
     active_run = session.scalar(
         select(AgentRun.id)
         .join(AgentThread, AgentThread.id == AgentRun.thread_id)
@@ -856,8 +1029,6 @@ def delete_project(
             AgentRun.status.in_([
                 AgentRunStatus.THINKING,
                 AgentRunStatus.PLANNING,
-                AgentRunStatus.WAITING_USER,
-                AgentRunStatus.WAITING_APPROVAL,
                 AgentRunStatus.EXECUTING,
                 AgentRunStatus.WAITING_EXTERNAL_JOB,
             ]),
@@ -1195,6 +1366,35 @@ def list_agent_messages(
 
 
 @app.get(
+    "/api/agent/threads/{thread_id}/active-run",
+    response_model=AgentRunRead | None,
+    tags=["agent"],
+)
+def get_active_agent_run(
+    thread_id: uuid.UUID,
+    session: DatabaseSession,
+    user: CurrentUser,
+) -> AgentRun | None:
+    """Return the durable run a chat should reattach to after reopening."""
+    _owned_thread(session, user, thread_id)
+    return session.scalar(
+        select(AgentRun)
+        .where(
+            AgentRun.thread_id == thread_id,
+            AgentRun.status.in_([
+                AgentRunStatus.THINKING,
+                AgentRunStatus.PLANNING,
+                AgentRunStatus.WAITING_USER,
+                AgentRunStatus.WAITING_APPROVAL,
+                AgentRunStatus.EXECUTING,
+                AgentRunStatus.WAITING_EXTERNAL_JOB,
+            ]),
+        )
+        .order_by(AgentRun.created_at.desc())
+    )
+
+
+@app.get(
     "/api/agent/threads/{thread_id}/pending-approval",
     response_model=AgentApprovalRead | None,
     tags=["agent"],
@@ -1269,52 +1469,55 @@ def create_agent_run(
         if shot is None or shot.project_id != thread.project_id:
             raise HTTPException(status_code=409, detail="Agent shot context is invalid")
 
-    active_run = session.scalar(
-        select(AgentRun).where(
-            AgentRun.thread_id == thread_id,
-            AgentRun.status.in_([
-                AgentRunStatus.THINKING,
-                AgentRunStatus.PLANNING,
-                AgentRunStatus.WAITING_USER,
-                AgentRunStatus.WAITING_APPROVAL,
-                AgentRunStatus.EXECUTING,
-                AgentRunStatus.WAITING_EXTERNAL_JOB,
-            ]),
+    # Serialize the check and insert in this process so rapid duplicate
+    # submissions cannot both observe an empty active-run slot.
+    with _AGENT_RUN_CREATE_LOCK:
+        active_run = session.scalar(
+            select(AgentRun).where(
+                AgentRun.thread_id == thread_id,
+                AgentRun.status.in_([
+                    AgentRunStatus.THINKING,
+                    AgentRunStatus.PLANNING,
+                    AgentRunStatus.WAITING_USER,
+                    AgentRunStatus.WAITING_APPROVAL,
+                    AgentRunStatus.EXECUTING,
+                    AgentRunStatus.WAITING_EXTERNAL_JOB,
+                ]),
+            )
         )
-    )
-    if active_run is not None:
-        raise HTTPException(status_code=409, detail="Chat Agent 仍在处理上一条消息")
+        if active_run is not None:
+            raise HTTPException(status_code=409, detail="Chat Agent 仍在处理上一条消息")
 
-    context_snapshot = payload.context.model_dump(mode="json")
-    run = AgentRun(
-        thread_id=thread.id,
-        status=AgentRunStatus.THINKING,
-        current_step="load_context",
-        context_snapshot=context_snapshot,
-        canvas_version=payload.context.canvas_version,
-    )
-    session.add(run)
-    session.flush()
-    user_message = AgentMessage(
-        thread_id=thread.id,
-        run_id=run.id,
-        role=AgentMessageRole.USER,
-        content=payload.message.strip(),
-        message_type="text",
-        message_metadata={"context": context_snapshot},
-    )
-    session.add(user_message)
-    session.flush()
-    append_agent_event(
-        session,
-        run,
-        "message.created",
-        {"message_id": str(user_message.id), "role": "user"},
-    )
-    if not thread.summary:
-        thread.summary = payload.message.strip()[:240]
-    session.commit()
-    session.refresh(run)
+        context_snapshot = payload.context.model_dump(mode="json")
+        run = AgentRun(
+            thread_id=thread.id,
+            status=AgentRunStatus.THINKING,
+            current_step="load_context",
+            context_snapshot=context_snapshot,
+            canvas_version=payload.context.canvas_version,
+        )
+        session.add(run)
+        session.flush()
+        user_message = AgentMessage(
+            thread_id=thread.id,
+            run_id=run.id,
+            role=AgentMessageRole.USER,
+            content=payload.message.strip(),
+            message_type="text",
+            message_metadata={"context": context_snapshot},
+        )
+        session.add(user_message)
+        session.flush()
+        append_agent_event(
+            session,
+            run,
+            "message.created",
+            {"message_id": str(user_message.id), "role": "user"},
+        )
+        if not thread.summary:
+            thread.summary = payload.message.strip()[:240]
+        session.commit()
+        session.refresh(run)
     background_tasks.add_task(execute_agent_run, str(run.id))
     return run
 
@@ -1375,6 +1578,7 @@ def cancel_agent_run(
 def decide_agent_approval(
     run_id: uuid.UUID,
     payload: AgentApprovalDecision,
+    background_tasks: BackgroundTasks,
     session: DatabaseSession,
     user: CurrentUser,
 ) -> dict[str, object]:
@@ -1398,6 +1602,30 @@ def decide_agent_approval(
             decision=payload.decision,
             feedback=payload.feedback,
         )
+        generated = (
+            _enqueue_approved_generations(session, approval, background_tasks, user)
+            if payload.decision == "approve"
+            else []
+        )
+        if generated:
+            result_message = session.scalar(
+                select(AgentMessage)
+                .where(
+                    AgentMessage.run_id == run.id,
+                    AgentMessage.message_type == "operation_result",
+                )
+                .order_by(AgentMessage.created_at.desc())
+            )
+            if result_message is not None:
+                result_message.content = (
+                    f"已应用 {len(approval.patch.get('operations', []))} 项画布变更，"
+                    f"并启动 {len(generated)} 个{('图片' if generated[0].kind == 'image' else '视频' if generated[0].kind == 'video' else '文本')}生成任务。"
+                )
+                result_message.message_metadata = {
+                    **(result_message.message_metadata or {}),
+                    "generation_ids": [str(item.id) for item in generated],
+                }
+                session.commit()
     except CanvasPatchError as exc:
         if was_pending:
             fail_agent_approval(session, run_id, str(exc))
@@ -1409,6 +1637,7 @@ def decide_agent_approval(
         "approval": approval,
         "canvas_version": canvas_version,
         "canvas_revision": canvas_revision,
+        "generations": generated,
     }
 
 

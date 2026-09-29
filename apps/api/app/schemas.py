@@ -261,6 +261,8 @@ class RuntimeSettingsRead(BaseModel):
     image_configured: bool
     agent_provider: str
     agent_model: str
+    agent_tool_protocol: Literal["auto", "tool_calling", "json"] = "auto"
+    agent_capabilities: dict[str, bool] = Field(default_factory=dict)
     qwen_text_model: str
     qwen_text_base_url: str
     qwen_configured: bool
@@ -282,11 +284,16 @@ class RuntimeSettingsUpdate(BaseModel):
     apply_to_agent: bool = True
 
 
+class RuntimeSettingsTestRequest(RuntimeSettingsUpdate):
+    test_tool_calling: bool = False
+
+
 class RuntimeSettingsTestRead(BaseModel):
     ok: bool
     provider: str
     model: str
     message: str
+    tool_calling: bool | None = None
 
 
 class AgentThreadCreate(BaseModel):
@@ -439,6 +446,7 @@ class AgentApprovalDecisionResult(BaseModel):
     approval: AgentApprovalRead
     canvas_version: str | None = None
     canvas_revision: int | None = None
+    generations: list[GenerationRead] = Field(default_factory=list)
 
 
 class AgentInterruptResumeResult(BaseModel):

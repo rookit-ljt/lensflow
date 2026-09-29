@@ -347,14 +347,16 @@ export function ChatAgent({
         title: `${project.name} · 创作 Agent`,
       });
       setThread(current);
-      const [restoredMessages, approval, interrupt] = await Promise.all([
+      const [restoredMessages, approval, interrupt, active] = await Promise.all([
         api.listAgentMessages(current.id),
         api.getPendingAgentApproval(current.id),
         api.getPendingAgentInterrupt(current.id),
+        api.getActiveAgentRun(current.id),
       ]);
       setMessages(restoredMessages);
       setPendingApproval(approval);
       setPendingInterrupt(interrupt);
+      setActiveRun(active);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Chat Agent 加载失败");
     } finally {
@@ -373,7 +375,7 @@ export function ChatAgent({
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [activeRun, messages, open]);
+  }, [activeRun, messages, open, pendingApproval, pendingInterrupt]);
 
   useEffect(() => () => eventSourceRef.current?.close(), []);
 
@@ -496,7 +498,10 @@ export function ChatAgent({
     source.addEventListener("run.completed", () => void finishRun(run.id));
     source.addEventListener("run.cancelled", () => void finishRun(run.id));
     source.onerror = () => {
-      source.close();
+      // EventSource automatically retries while CONNECTING. Do not close the
+      // stream on a transient network failure; closing here permanently loses
+      // the live result even though the server-side run keeps executing.
+      if (source.readyState !== EventSource.CLOSED) return;
       void api.getAgentRun(run.id).then((latest) => {
         if (terminalStatuses.has(latest.status)) void finishRun(run.id);
         else if (latest.status === "waiting_approval") {
@@ -513,6 +518,10 @@ export function ChatAgent({
       }).catch(() => setError("Agent 事件连接失败"));
     };
   }, [finishRun, onCanvasChanged, thread]);
+
+  useEffect(() => {
+    if (open && activeRun && !eventSourceRef.current) subscribeToRun(activeRun);
+  }, [activeRun, open, subscribeToRun]);
 
   const sendMessage = useCallback(async (value?: string) => {
     const content = (value ?? draft).trim();
@@ -798,13 +807,13 @@ export function ChatAgent({
                 ))}
               </div>
               <footer>
-                <span>不会启动模型生成或产生调用费用</span>
+                <span>批准后可能启动生成，真实模型调用可能产生费用</span>
                 <div>
                   <Button type="button" variant="ghost" onClick={() => void decideApproval("reject")} disabled={Boolean(decisionLoading)}>
                     {decisionLoading === "reject" ? <LoaderCircle className="animate-spin" /> : null}取消
                   </Button>
                   <Button type="button" onClick={() => void decideApproval("approve")} disabled={Boolean(decisionLoading)}>
-                    {decisionLoading === "approve" ? <LoaderCircle className="animate-spin" /> : <Check />}应用到画布
+                    {decisionLoading === "approve" ? <LoaderCircle className="animate-spin" /> : <Check />}批准执行
                   </Button>
                 </div>
               </footer>

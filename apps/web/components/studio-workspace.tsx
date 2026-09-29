@@ -31,6 +31,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
+  ApiError,
   api,
   type CurrentUser,
   type Generation,
@@ -206,6 +207,9 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
   const [deletingAssetId, setDeletingAssetId] = useState<string | null>(null);
   const [assetLibraryError, setAssetLibraryError] = useState<string | null>(null);
   const [agentOpen, setAgentOpen] = useState(false);
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get("chat") === "1") setAgentOpen(true);
+  }, []);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [shotRunning, setShotRunning] = useState(false);
   const [pendingNodeId, setPendingNodeId] = useState<string | null>(null);
@@ -276,10 +280,16 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
       ));
       setSyncState("saved");
     } catch (cause) {
+      if (cause instanceof ApiError && cause.status === 404) {
+        // The project may have been deleted in another tab (or by the
+        // dashboard cleanup flow). Do not leave the user on a dead canvas URL.
+        router.replace("/dashboard");
+        return;
+      }
       setError(cause instanceof Error ? cause.message : "无法连接 API");
       setSyncState("error");
     }
-  }, [projectId]);
+  }, [projectId, router]);
 
   useEffect(() => {
     void loadWorkspace();
@@ -777,8 +787,21 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
 
   useEffect(() => {
     if (!selectedGeneration || !["queued", "running"].includes(selectedGeneration.status)) return;
-    const timer = window.setInterval(() => {
+    const POLL_INTERVAL_MS = 1500;
+    const POLL_DEADLINE_MS = 10 * 60 * 1000;
+    // Anchor the deadline to the task's own last update so a page refresh
+    // cannot grant an already-stuck generation a fresh polling window.
+    const startedAt = Date.parse(selectedGeneration.updated_at) || Date.now();
+    let cancelled = false;
+    let timer: number | undefined;
+    const tick = () => {
+      if (cancelled) return;
+      if (Date.now() - startedAt >= POLL_DEADLINE_MS) {
+        setError("生成任务超过 10 分钟没有完成，可能已中断；请点击“停止生成”后重试");
+        return;
+      }
       void api.getGeneration(selectedGeneration.id).then((generation) => {
+        if (cancelled) return;
         setGenerations((current) => ({ ...current, [generation.shot_id]: generation }));
         setGenerationHistory((current) => ({
           ...current,
@@ -790,12 +813,20 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
         if (generation.status === "succeeded" || generation.status === "failed") {
           void loadWorkspace();
           if (generation.status === "succeeded") void refreshProjectAssets();
+          return;
         }
+        timer = window.setTimeout(tick, POLL_INTERVAL_MS);
       }).catch((cause) => {
+        if (cancelled) return;
         setError(cause instanceof Error ? cause.message : "生成任务状态读取失败");
+        timer = window.setTimeout(tick, POLL_INTERVAL_MS);
       });
-    }, 1500);
-    return () => window.clearInterval(timer);
+    };
+    timer = window.setTimeout(tick, POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
   }, [loadWorkspace, refreshProjectAssets, selectedGeneration]);
 
   const replaceShot = useCallback((updatedShot: Shot) => {

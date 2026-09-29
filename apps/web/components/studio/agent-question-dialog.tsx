@@ -26,7 +26,7 @@ export function AgentQuestionDialog({ interrupt, open, loading, error, onClose, 
   const payloadQuestions = interrupt.payload.questions ?? [];
   // Older runs can contain a selection interrupt with no options. Treat it
   // as an open question rather than rendering an empty, non-actionable card.
-  const form = interrupt.kind === "question_form" || (!payloadQuestions.length && !legacyOptions.length);
+  const form = interrupt.kind === "question_form" || interrupt.payload.presentation === "question_form" || (!payloadQuestions.length && !legacyOptions.length);
   const questions: AgentQuestion[] = payloadQuestions.length ? payloadQuestions : [{
     id: interrupt.id, title: interrupt.title, description: interrupt.description,
     kind: form ? "text" : interrupt.kind === "multi_select" ? "multi_select" : "single_select",

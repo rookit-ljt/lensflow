@@ -20,3 +20,4 @@ tmp/
 *.tsbuildinfo
 coverage/
 *.log
+.workbuddy/

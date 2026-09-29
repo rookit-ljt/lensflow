@@ -272,23 +272,65 @@ def compile_canvas_patch(
             continue
 
         if action_type == "bind_asset":
-            if action.get("target", "selected") != "selected" or selected_id is None:
-                raise CanvasPatchError("绑定资产前，请先在画布中选中一个生成节点")
+            target_ref = action.get("target")
+            if target_ref in (None, ""):
+                if selected_id is not None:
+                    target_ref = "selected"
+                elif len(temp_nodes) == 1:
+                    # A new-node flow has no selected node yet. Bind the
+                    # referenced asset to the only node created in this patch.
+                    target_ref = next(iter(temp_nodes))
+                else:
+                    raise CanvasPatchError("绑定资产前，请先选中或新建一个生成节点")
+            elif target_ref == "selected" and selected_id is None and len(temp_nodes) == 1:
+                # Some model plans use the canonical selected target even
+                # though this is a create-first flow with no selection yet.
+                target_ref = next(iter(temp_nodes))
+            target = _resolve_endpoint(target_ref, selected_id, temp_nodes, existing)
+            target_node = existing.get(str(target))
+            if target_node is None:
+                # Newly-created nodes are represented by temp_nodes until the
+                # patch is applied; they are always generator nodes.
+                if target not in temp_nodes.values():
+                    raise CanvasPatchError("待绑定资产的生成节点不存在")
+            elif target_node.type != "generator":
+                raise CanvasPatchError("资产只能绑定到生成节点")
             role = str(action.get("role") or "reference")
             if role not in {"reference", "first_frame", "last_frame"}:
                 raise CanvasPatchError("资产绑定位置只支持参考图、首帧或尾帧")
+            asset_ref = str(action.get("asset_id") or "")
             try:
-                asset_id = uuid.UUID(str(action.get("asset_id") or ""))
-            except ValueError as exc:
-                raise CanvasPatchError("资产引用 ID 无效") from exc
-            target = existing[selected_id]
-            if target.type != "generator":
-                raise CanvasPatchError("资产只能绑定到生成节点")
+                asset_id = uuid.UUID(asset_ref)
+            except ValueError:
+                # @ mentions can reference an existing canvas image node.
+                # Such a reference is a graph edge, not an asset-library bind.
+                source_node = existing.get(asset_ref)
+                if source_node is not None and source_node.type == "generator":
+                    if source_node.id == target:
+                        raise CanvasPatchError("不能把节点连接到自身")
+                    all_edges = {(str(edge.source), str(edge.target)) for edge in workflow.edges}
+                    all_edges.update(
+                        (str(item["source"]), str(item["target"]))
+                        for item in operations
+                        if item["type"] == "connect_nodes"
+                    )
+                    if (str(source_node.id), str(target)) in all_edges:
+                        raise CanvasPatchError("画布中已存在这条参考连线")
+                    operations.append({
+                        "type": "connect_nodes",
+                        "id": operation_id,
+                        "description": description,
+                        "edge_id": uuid.uuid4(),
+                        "source": source_node.id,
+                        "target": target,
+                    })
+                    continue
+                raise CanvasPatchError("资产引用 ID 无效；引用画布节点请使用 connect_nodes") from None
             operations.append({
                 "type": "bind_asset",
                 "id": operation_id,
                 "description": description,
-                "node_id": uuid.UUID(selected_id),
+                "node_id": target,
                 "asset_id": asset_id,
                 "role": role,
             })

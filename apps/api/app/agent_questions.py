@@ -42,13 +42,29 @@ class AgentReply(BaseModel):
 
     message: Annotated[str, StringConstraints(min_length=1, max_length=16000)]
     questions: list[AgentQuestion] = Field(max_length=5)
+    next_action: Literal["reply", "plan_canvas"] = "reply"
 
     @model_validator(mode="after")
     def unique_questions(self) -> Self:
+        if self.next_action == "plan_canvas" and self.questions:
+            raise ValueError("还有待答问题时先提问，不能同时请求画布计划")
         if len({item.id for item in self.questions}) != len(self.questions):
             raise ValueError("问题 ID 不能重复")
         if len({normalized_question_title(item.title) for item in self.questions}) != len(self.questions):
             raise ValueError("同一轮不能重复询问相同问题")
+        # This is an output guard, not an action router: a prose claim must
+        # never implicitly authorize a plan. Ask the model to repair it using
+        # next_action, then let the service create the actual approval record.
+        if self.next_action == "reply" and re.search(
+            r"(?:已(?:经)?[^。！？\n]{0,24}提交[^。！？\n]{0,8}(?:审批|批准)|"
+            r"(?:审批|批准)卡片[^。！？\n]{0,8}已(?:经)?(?:创建|生成|提交)|"
+            r"请[^。！？\n]{0,16}(?:查看|点击)[^。！？\n]{0,12}(?:审批|批准)卡片|"
+            r"已(?:经)?[^。！？\n]{0,20}(?:应用|修改|创建)[^。！？\n]{0,12}(?:画布|节点)|"
+            r"已(?:经)?[^。！？\n]{0,20}(?:启动|开始)[^。！？\n]{0,12}(?:图片|视频|生成)任务|"
+            r"(?:画布|节点|图片|视频)生成任务[^。！？\n]{0,12}已(?:经)?(?:创建|启动|提交))",
+            self.message,
+        ):
+            raise ValueError("聊天文字不能声称已提交审批；需要计划时返回 next_action=plan_canvas")
         return self
 
     def confirmation(self) -> dict[str, object] | None:

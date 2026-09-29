@@ -1,9 +1,18 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
+from pydantic import BaseModel, ConfigDict, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 API_ROOT = Path(__file__).resolve().parents[1]
+
+
+class AgentModelCapabilities(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tool_calling: bool | None = None
+    structured_output: bool | None = None
 
 
 class Settings(BaseSettings):
@@ -33,12 +42,12 @@ class Settings(BaseSettings):
     text_model: str = ""
     text_system_prompt: str = "你是专业的影视创作助手。请直接输出可用于创作流程的中文结果，不要解释你的工作过程。"
     text_request_timeout_seconds: float = 90
-    image_provider: str = "ark_seedream"
+    image_provider: str = "qwen"
     image_api_key: str = ""
-    image_base_url: str = "https://ark.cn-beijing.volces.com/api/v3"
-    image_model: str = "doubao-seedream-4-0-250828"
+    image_base_url: str = "https://dashscope.aliyuncs.com/api/v1"
+    image_model: str = "qwen-image-plus"
     image_request_timeout_seconds: float = 180
-    image_watermark: bool = True
+    image_watermark: bool = False
     local_video_base_url: str = "http://127.0.0.1:8787"
     local_video_model: str = "minimax-h3-local"
     local_video_request_timeout_seconds: float = 1800
@@ -55,6 +64,9 @@ class Settings(BaseSettings):
     upload_max_bytes: int = 10 * 1024 * 1024
     agent_provider: str = "qwen"
     agent_model: str = ""
+    agent_tool_protocol: Literal["auto", "tool_calling", "json"] = "auto"
+    # Keys are provider:model, so one gateway/model cannot change another's capabilities.
+    agent_model_capabilities: dict[str, AgentModelCapabilities] = Field(default_factory=dict)
     agent_temperature: float = 0.45
     agent_max_tokens: int = 2800
     agent_history_messages: int = 20

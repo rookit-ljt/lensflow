@@ -10,6 +10,7 @@ import {
   LogOut,
   Plus,
   RefreshCw,
+  Search,
   Trash2,
 } from "lucide-react";
 
@@ -45,6 +46,7 @@ export function ProjectDashboard({ currentUser, onLogout }: ProjectDashboardProp
   const [creating, setCreating] = useState(false);
   const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
 
   const loadProjects = async () => {
     setLoading(true);
@@ -96,8 +98,9 @@ export function ProjectDashboard({ currentUser, onLogout }: ProjectDashboardProp
 
   return (
     <main className="dashboard-shell dashboard-shell--minimal">
+      <aside className="project-sidebar"><Button type="button" aria-label="新建项目" onClick={() => document.getElementById("project-name")?.focus()}><Plus /></Button><Button type="button" aria-label="项目首页"><span>⌂</span></Button><Button type="button" aria-label="项目列表" className="active"><span>▱</span></Button><Button type="button" aria-label="素材库"><span>▦</span></Button></aside>
       <header className="dashboard-header">
-        <div className="dashboard-brand" aria-label="AI Video Studio"><strong>AI Video Studio</strong></div>
+        <div className="dashboard-brand" aria-label="AI Video Studio"><strong>灵感工场</strong></div>
         <div className="dashboard-account">
           <span className="dashboard-avatar">{currentUser.display_name.slice(0, 1).toUpperCase()}</span>
           {currentUser.email !== "local@localhost.invalid" ? <Tooltip>
@@ -110,7 +113,8 @@ export function ProjectDashboard({ currentUser, onLogout }: ProjectDashboardProp
       </header>
 
       <div className="dashboard-minimal-content">
-        <Card className="dashboard-project-creator dashboard-project-creator--minimal">
+        <div className="project-heading"><h1>我的项目</h1><label><Search size={22}/><input aria-label="搜索项目" placeholder="搜索" value={search} onChange={e=>setSearch(e.target.value)} /></label></div>
+        <Card className="dashboard-project-creator dashboard-project-creator--minimal project-create-tile">
           <form onSubmit={createProject}>
             <h1>新建项目</h1>
               <div className="dashboard-project-creator__fields">
@@ -160,11 +164,12 @@ export function ProjectDashboard({ currentUser, onLogout }: ProjectDashboardProp
         ) : null}
 
         <div className="dashboard-project-grid">
+          {!loading && !search && <Card className="dashboard-project-card project-new-tile" role="button" tabIndex={0} onClick={() => document.getElementById("project-name")?.focus()}><Plus size={34}/><span>新建项目</span></Card>}
           {loading ? Array.from({ length: 3 }, (_, index) => (
             <Card key={index} className="dashboard-project-card dashboard-project-card--loading">
               <Skeleton /><Skeleton /><Skeleton />
             </Card>
-          )) : projects.map((project) => (
+          )) : projects.filter(project => project.name.toLowerCase().includes(search.toLowerCase())).map((project) => (
             <Card
               key={project.id}
               className="dashboard-project-card"
