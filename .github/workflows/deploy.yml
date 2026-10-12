@@ -1,41 +1,69 @@
-name: 自动构建并部署至宝塔服务器
+name: LensFlow CI/CD 自动化流水线
 
 on:
   push:
-    branches: [main, master] # 当推送到 main 或 master 分支时自动触发
-  workflow_dispatch:        # 支持在 GitHub 网页上手动点击按钮触发
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
 
 concurrency:
-  group: deploy-to-bt
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build-and-deploy:
-    name: 云端构建并同步至宝塔
+  test-and-deploy:
+    name: 质检、构建与宝塔部署
     runs-on: ubuntu-latest
 
     steps:
       - name: 1. 检出代码
         uses: actions/checkout@v4
 
-      - name: 2. 安装 pnpm
+      # ==================== 后端检查与单元测试 ====================
+      - name: 2. 安装 Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: 3. 后端代码检查与单元测试
+        working-directory: apps/api
+        env:
+          DATABASE_URL: sqlite://
+          QWEN_API_KEY: "test-mock-key"
+          CELERY_TASK_ALWAYS_EAGER: "true"
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[dev]'
+          python -m ruff check .
+          python -m pytest -q
+
+      # ==================== 前端检查与云端编译 ====================
+      - name: 4. 安装 pnpm
         uses: pnpm/action-setup@v4
         with:
           version: 10
 
-      - name: 3. 安装 Node.js 20 (带缓存)
+      - name: 5. 安装 Node.js 20 (带缓存)
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: pnpm
 
-      - name: 4. 云端编译前端与依赖 (不占用宝塔服务器资源)
+      - name: 6. 安装前端依赖与类型检查
         run: |
           pnpm approve-builds --all || true
           pnpm install --frozen-lockfile || pnpm install --no-frozen-lockfile
-          pnpm build
+          pnpm typecheck
 
-      - name: 5. 打包构建产物与源码 (轻量化，排除大文件与本地缓存)
+      - name: 7. 云端编译前端 (不占用宝塔内存)
+        run: pnpm build
+
+      # ==================== 自动化部署至宝塔服务器 ====================
+      # 仅在主分支 push 或手动点击触发时才执行部署；PR 仅跑质检不发布
+      - name: 8. 打包轻量发布包
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         run: |
           tar --warning=no-file-changed -czf /tmp/release.tar.gz \
             --exclude='release.tar.gz*' \
@@ -50,7 +78,8 @@ jobs:
             .
           mv /tmp/release.tar.gz ./release.tar.gz
 
-      - name: 6. 上传部署包至宝塔服务器
+      - name: 9. 上传发布包至宝塔服务器
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SERVER_HOST }}
@@ -61,7 +90,8 @@ jobs:
           source: "release.tar.gz"
           target: "/tmp"
 
-      - name: 7. 宝塔服务器端解压并平滑重启服务
+      - name: 10. 宝塔端解压并平滑重启 PM2
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
