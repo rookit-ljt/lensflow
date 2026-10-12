@@ -4,6 +4,7 @@ from sqlalchemy import select
 
 from .celery_app import celery_app
 from .config import get_settings
+from .credits_service import refund_credits, settle_credits
 from .database import SessionLocal
 from .db_models import Asset, Generation, GenerationStatus, ShotStatus
 from .generation_context import resolve_generation_contexts
@@ -94,6 +95,15 @@ def generate_shot(generation_id: str) -> None:
             # it returns, discard the result and keep the terminal state.
             if (generation.parameters or {}).get("cancel_requested"):
                 shot.status = ShotStatus.READY
+                if generation.cost_credits > 0 and shot.project.user_id is not None:
+                    refund_credits(
+                        session=session,
+                        user_id=shot.project.user_id,
+                        amount=generation.cost_credits,
+                        biz_type=f"{generation.kind}_generation",
+                        biz_id=str(generation.id),
+                        description=f"{generation.kind} 任务已取消，积分原路返还",
+                    )
                 session.commit()
                 return
             generation.status = GenerationStatus.SUCCEEDED
@@ -101,6 +111,15 @@ def generate_shot(generation_id: str) -> None:
             generation.provider_job_id = result.provider_job_id
             generation.output_url = result.output_url
             generation.output_text = result.output_text
+            if generation.cost_credits > 0 and shot.project.user_id is not None:
+                settle_credits(
+                    session=session,
+                    user_id=shot.project.user_id,
+                    amount=generation.cost_credits,
+                    biz_type=f"{generation.kind}_generation",
+                    biz_id=str(generation.id),
+                    description=f"{generation.kind} 生成成功扣除积分",
+                )
             if result.output_url and generation.kind in {"image", "video"}:
                 asset = session.scalar(
                     select(Asset).where(
@@ -138,9 +157,27 @@ def generate_shot(generation_id: str) -> None:
             session.refresh(generation)
             if (generation.parameters or {}).get("cancel_requested"):
                 shot.status = ShotStatus.READY
+                if generation.cost_credits > 0 and shot.project.user_id is not None:
+                    refund_credits(
+                        session=session,
+                        user_id=shot.project.user_id,
+                        amount=generation.cost_credits,
+                        biz_type=f"{generation.kind}_generation",
+                        biz_id=str(generation.id),
+                        description=f"{generation.kind} 任务已取消，积分原路返还",
+                    )
                 session.commit()
                 return
             generation.status = GenerationStatus.FAILED
             generation.error = str(exc)
             shot.status = ShotStatus.READY
+            if generation.cost_credits > 0 and shot.project.user_id is not None:
+                refund_credits(
+                    session=session,
+                    user_id=shot.project.user_id,
+                    amount=generation.cost_credits,
+                    biz_type=f"{generation.kind}_generation",
+                    biz_id=str(generation.id),
+                    description=f"{generation.kind} 生成失败，积分原路返还",
+                )
         session.commit()

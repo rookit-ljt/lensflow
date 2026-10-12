@@ -1,0 +1,18 @@
+[Unit]
+Description=Lensflow Next.js Frontend
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/var/www/lensflow/apps/web
+ExecStart=/usr/bin/pnpm start
+Restart=always
+RestartSec=3
+Environment="NODE_ENV=production"
+Environment="PORT=3000"
+Environment="NEXT_DIST_DIR=.next-prod"
+EnvironmentFile=/var/www/lensflow/.env
+
+[Install]
+WantedBy=multi-user.target

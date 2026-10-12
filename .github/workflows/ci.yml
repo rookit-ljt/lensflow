@@ -21,6 +21,7 @@ jobs:
         with:
           node-version: 20
           cache: pnpm
+      - run: pnpm approve-builds --all || true
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm build

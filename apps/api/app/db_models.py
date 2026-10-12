@@ -104,6 +104,9 @@ class User(Base):
         back_populates="user", cascade="all, delete-orphan"
     )
     projects: Mapped[list["Project"]] = relationship(back_populates="user")
+    wallet: Mapped["UserWallet | None"] = relationship(
+        back_populates="user", uselist=False, cascade="all, delete-orphan"
+    )
 
 
 class AuthSession(Base):
@@ -239,6 +242,7 @@ class Generation(Base):
     output_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     output_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    cost_credits: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -518,3 +522,64 @@ class AgentInterrupt(Base):
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     run: Mapped[AgentRun] = relationship(back_populates="interrupts")
+
+
+class UserWallet(Base):
+    __tablename__ = "user_wallets"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    balance: Mapped[int] = mapped_column(Integer, default=0)
+    frozen: Mapped[int] = mapped_column(Integer, default=0)
+    total_earned: Mapped[int] = mapped_column(Integer, default=0)
+    total_spent: Mapped[int] = mapped_column(Integer, default=0)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    user: Mapped[User] = relationship(back_populates="wallet")
+    transactions: Mapped[list["CreditTransaction"]] = relationship(
+        back_populates="wallet", cascade="all, delete-orphan", order_by="CreditTransaction.created_at.desc()"
+    )
+
+
+class CreditTransaction(Base):
+    __tablename__ = "credit_transactions"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    wallet_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("user_wallets.id", ondelete="CASCADE"), index=True
+    )
+    amount: Mapped[int] = mapped_column(Integer)
+    balance_after: Mapped[int] = mapped_column(Integer)
+    type: Mapped[str] = mapped_column(String(32))  # freeze, unfreeze, consume, refund, grant, redeem
+    biz_type: Mapped[str] = mapped_column(String(32))  # text_generation, image_generation, video_generation, agent_run, gift, code, admin
+    biz_id: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(160), unique=True, index=True)
+    description: Mapped[str] = mapped_column(String(255), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    wallet: Mapped[UserWallet] = relationship(back_populates="transactions")
+
+
+class CreditCardCode(Base):
+    __tablename__ = "credit_card_codes"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    code: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    credits: Mapped[int] = mapped_column(Integer)
+    is_redeemed: Mapped[bool] = mapped_column(Boolean, default=False)
+    redeemed_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    redeemed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+

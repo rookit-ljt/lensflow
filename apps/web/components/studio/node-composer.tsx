@@ -1,9 +1,10 @@
-import { useRef, type CSSProperties } from "react";
+import { useMemo, useRef, type CSSProperties } from "react";
 import {
   ArrowUp,
   Braces,
   ChevronDown,
   ChevronUp,
+  Coins,
   LoaderCircle,
   MousePointer2,
   RefreshCw,
@@ -85,6 +86,8 @@ type NodeComposerProps = {
   onCancel?: () => void;
   onDelete: () => void;
   onSelectGeneration?: (generationId: string) => void;
+  wallet?: import("@/lib/api").UserWallet | null;
+  onCreditsOpenChange?: (open: boolean) => void;
 };
 
 type ComposerSelectOption = {
@@ -122,7 +125,27 @@ function ComposerSelect({ label, value, options, wide = false, disabled = false,
   );
 }
 
-export function NodeComposer({ node, generation, generationHistory = [], providers, assets, contexts, busy: busyProp = false, uploading = false, style, onUpdate, onUpload, onSelectAsset, onRun, onRetry, onCancel, onDelete, onSelectGeneration }: NodeComposerProps) {
+export function NodeComposer({
+  node,
+  generation,
+  generationHistory = [],
+  providers,
+  assets,
+  contexts,
+  busy: busyProp = false,
+  uploading = false,
+  style,
+  onUpdate,
+  onUpload,
+  onSelectAsset,
+  onRun,
+  onRetry,
+  onCancel,
+  onDelete,
+  onSelectGeneration,
+  wallet,
+  onCreditsOpenChange,
+}: NodeComposerProps) {
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const config = node.data.config;
   const mode = creationMode(config);
@@ -318,6 +341,22 @@ export function NodeComposer({ node, generation, generationHistory = [], provide
         : {}),
     });
   };
+
+  const nodeCost = useMemo(() => {
+    if (activeProvider?.id === "mock") return 0;
+    if (mode === "text") return 1;
+    if (mode === "image") {
+      const count = Math.max(1, numberConfig(config, "count", 1));
+      const resolution = textConfig(config, "resolution", "1K");
+      const hasRef = imageContexts.length > 0 || (uploadedAssets(config)?.length ?? 0) > 0;
+      let base = 2;
+      if (resolution.includes("2K")) base = 4;
+      if (hasRef) base = Math.max(base, 6);
+      return base * count;
+    }
+    if (mode === "video") return 25;
+    return 1;
+  }, [activeProvider?.id, mode, config, imageContexts.length]);
 
   return (
     <section className={`node-composer ${busy ? "is-busy" : ""} ${isLocalH3 && referenceMode === "ref2va" ? "is-ref2va" : ""}`} style={style} aria-label="节点创作控制台" aria-busy={busy || undefined}>
@@ -800,35 +839,74 @@ export function NodeComposer({ node, generation, generationHistory = [], provide
               ) : null}
               </div>
 
-              <Tooltip>
+              <div className="flex items-center gap-2">
+                {mode && (
+                  <button
+                    type="button"
+                    onClick={() => onCreditsOpenChange?.(true)}
+                    className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium cursor-pointer transition-colors ${
+                      wallet && wallet.balance < nodeCost
+                        ? "bg-rose-500/15 text-rose-300 border border-rose-500/30 hover:bg-rose-500/25"
+                        : nodeCost === 0
+                          ? "bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 hover:bg-emerald-500/20"
+                          : "bg-amber-500/10 text-amber-300 border border-amber-500/20 hover:bg-amber-500/20"
+                    }`}
+                    title={
+                      nodeCost === 0
+                        ? "Mock 免积分调用"
+                        : wallet && wallet.balance < nodeCost
+                          ? `积分不足（需要 ${nodeCost} 积分，当前可用 ${wallet.balance} 积分），点击打开积分中心充值或兑换`
+                          : `预计消耗 ${nodeCost} 积分（当前可用 ${wallet?.balance ?? "-"} 积分），点击查看积分中心`
+                    }
+                  >
+                    <Coins className="w-3.5 h-3.5 text-amber-400" />
+                    <span>{nodeCost > 0 ? `${nodeCost} 积分` : "免积分"}</span>
+                    {wallet && wallet.balance < nodeCost ? (
+                      <span className="text-[10px] text-rose-400 font-bold ml-0.5">不足</span>
+                    ) : null}
+                  </button>
+                )}
+
+                <Tooltip>
                   <TooltipTrigger
                     render={
-                    <Button
-                      className="composer-run"
-                      type="button"
-                      size="icon-lg"
-                      disabled={busy ? !onCancel : !runnablePrompt.trim() || !providerReady || !referenceModeReady}
-                      aria-label={busy ? "取消生成" : failed ? "重试生成" : "运行当前节点"}
-                      onClick={busy ? onCancel : failed ? onRetry : onRun}
-                    />
-                  }
-                >
-                  {busy ? <Square /> : failed ? <RefreshCw /> : <ArrowUp />}
-                </TooltipTrigger>
-                <TooltipContent>
-                  {busy
-                    ? "取消当前生成任务"
-                    : failed
-                      ? "重试当前生成任务"
-                      : providerReady
-                    ? referenceModeReady
-                      ? "运行当前生成节点"
-                      : referenceModeError
-                    : !providerSupportsImageReference
-                      ? "当前图片模型不支持参考图，请选择千问或 Gemini 图片模型"
-                      : "请先在后端配置所选模型的 API Key"}
-                </TooltipContent>
-              </Tooltip>
+                      <Button
+                        className="composer-run"
+                        type="button"
+                        size="icon-lg"
+                        disabled={busy ? !onCancel : !runnablePrompt.trim() || !providerReady || !referenceModeReady}
+                        aria-label={busy ? "取消生成" : failed ? "重试生成" : "运行当前节点"}
+                        onClick={
+                          busy
+                            ? onCancel
+                            : failed
+                              ? onRetry
+                              : wallet && wallet.balance < nodeCost
+                                ? () => onCreditsOpenChange?.(true)
+                                : onRun
+                        }
+                      />
+                    }
+                  >
+                    {busy ? <Square /> : failed ? <RefreshCw /> : <ArrowUp />}
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {busy
+                      ? "取消当前生成任务"
+                      : failed
+                        ? "重试当前生成任务"
+                        : wallet && wallet.balance < nodeCost
+                          ? `积分不足（需要 ${nodeCost} 积分，当前可用 ${wallet.balance} 积分），点击打开积分中心`
+                          : providerReady
+                        ? referenceModeReady
+                          ? `运行当前生成节点（消耗 ${nodeCost} 积分）`
+                          : referenceModeError
+                        : !providerSupportsImageReference
+                          ? "当前图片模型不支持参考图，请选择千问或 Gemini 图片模型"
+                          : "请先在后端配置所选模型的 API Key"}
+                  </TooltipContent>
+                </Tooltip>
+              </div>
             </div>
 
             {generationHistory.length > 1 ? (

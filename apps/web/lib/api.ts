@@ -1,4 +1,17 @@
-const API_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000").replace(/\/$/, "");
+export function getApiBaseUrl(): string {
+  if (process.env.NEXT_PUBLIC_API_URL !== undefined && process.env.NEXT_PUBLIC_API_URL !== "") {
+    return process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, "");
+  }
+  if (typeof window !== "undefined") {
+    const isLocalhost =
+      window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+    if (isLocalhost && (window.location.port === "3000" || window.location.port === "3001")) {
+      return "http://localhost:8000";
+    }
+    return "";
+  }
+  return "http://127.0.0.1:8000";
+}
 
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) {
@@ -15,11 +28,11 @@ export interface CurrentUser {
 }
 
 export function generationDownloadUrl(generationId: string): string {
-  return `${API_URL}/api/generations/${generationId}/download`;
+  return `${getApiBaseUrl()}/api/generations/${generationId}/download`;
 }
 
 export function projectExportUrl(projectId: string): string {
-  return `${API_URL}/api/projects/${projectId}/export`;
+  return `${getApiBaseUrl()}/api/projects/${projectId}/export`;
 }
 
 export type ShotStatus = "draft" | "ready" | "generating" | "review" | "approved";
@@ -399,8 +412,45 @@ export interface AgentEvent {
   created_at: string;
 }
 
+export interface UserWallet {
+  balance: number;
+  frozen: number;
+  total_earned: number;
+  total_spent: number;
+}
+
+export interface CreditTransaction {
+  id: string;
+  amount: number;
+  balance_after: number;
+  type: string;
+  biz_type: string;
+  biz_id: string | null;
+  description: string;
+  created_at: string;
+}
+
+export interface CreditPricingItem {
+  name: string;
+  category: string;
+  cost: number;
+  unit: string;
+  description: string;
+}
+
+export interface CreditPricing {
+  items: CreditPricingItem[];
+}
+
+export interface CreditEstimateResult {
+  cost: number;
+  balance: number;
+  sufficient: boolean;
+}
+
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_URL}${path}`, {
+  const response = await fetch(`${getApiBaseUrl()}${path}`, {
     ...init,
     credentials: "include",
     headers: { "Content-Type": "application/json", ...init?.headers },
@@ -436,7 +486,7 @@ export const api = {
   uploadAsset: async (file: File, projectId?: string): Promise<UploadedAsset> => {
     const query = new URLSearchParams({ filename: file.name });
     if (projectId) query.set("project_id", projectId);
-    const response = await fetch(`${API_URL}/api/uploads?${query}`, {
+    const response = await fetch(`${getApiBaseUrl()}/api/uploads?${query}`, {
       method: "POST",
       headers: { "Content-Type": file.type || "application/octet-stream" },
       body: file,
@@ -596,5 +646,24 @@ export const api = {
   listAgentEvents: (runId: string) =>
     request<AgentEvent[]>(`/api/agent/runs/${runId}/events`),
   agentEventStreamUrl: (runId: string, after = 0) =>
-    `${API_URL}/api/agent/runs/${runId}/events/stream?after=${after}`,
+    `${getApiBaseUrl()}/api/agent/runs/${runId}/events/stream?after=${after}`,
+  getWallet: () => request<UserWallet>("/api/credits/wallet"),
+  getPricing: () => request<CreditPricing>("/api/credits/pricing"),
+  estimateCredits: (payload: {
+    kind: string;
+    provider: string;
+    model?: string;
+    parameters?: Record<string, unknown>;
+  }) =>
+    request<CreditEstimateResult>("/api/credits/estimate", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  getCreditTransactions: (limit = 50, offset = 0) =>
+    request<CreditTransaction[]>(`/api/credits/transactions?limit=${limit}&offset=${offset}`),
+  redeemCreditCode: (code: string) =>
+    request<{ credits_added: number; new_balance: number }>("/api/credits/redeem", {
+      method: "POST",
+      body: JSON.stringify({ code }),
+    }),
 };

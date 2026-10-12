@@ -446,3 +446,45 @@ def test_cancelled_run_does_not_publish_late_question_form(monkeypatch):
         assert client.get(f"/api/agent/threads/{thread['id']}/pending-interrupt").json() is None
         messages = client.get(f"/api/agent/threads/{thread['id']}/messages").json()
         assert not any(message["role"] == "assistant" for message in messages)
+
+
+def test_question_options_normalizes_dicts_strings_and_extra_fields():
+    raw_payload = {
+        "message": "请确认以下三项设计方向：",
+        "questions": [
+            {
+                "id": "q1",
+                "title": "场景风格",
+                "kind": "single_select",
+                "required": True,
+                "options": {
+                    "A": "法式复古街景",
+                    "B": "极简室内影棚",
+                },
+            },
+            {
+                "id": "q2",
+                "title": "服装搭配",
+                "kind": "single_select",
+                "required": True,
+                "options": ["经典法式碎花裙", "优雅丝绸长裙"],
+            },
+            {
+                "id": "q3",
+                "title": "补充构图要求",
+                "kind": "text",
+                "required": False,
+                "options": None,
+            },
+        ],
+    }
+    reply = AgentReply.model_validate(raw_payload)
+    assert len(reply.questions) == 3
+    assert len(reply.questions[0].options) == 2
+    assert reply.questions[0].options[0].id == "A"
+    assert reply.questions[0].options[0].label == "法式复古街景"
+    assert len(reply.questions[1].options) == 2
+    assert reply.questions[1].options[0].id == "opt_1"
+    assert reply.questions[1].options[0].label == "经典法式碎花裙"
+    assert reply.questions[2].options == []
+

@@ -1,0 +1,16 @@
+[Unit]
+Description=Lensflow FastAPI Backend
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/var/www/lensflow/apps/api
+ExecStart=/var/www/lensflow/apps/api/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=3
+Environment="PYTHONUNBUFFERED=1"
+EnvironmentFile=/var/www/lensflow/.env
+
+[Install]
+WantedBy=multi-user.target

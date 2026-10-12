@@ -21,3 +21,6 @@ tmp/
 coverage/
 *.log
 .workbuddy/
+*.tar.gz
+*.zip
+

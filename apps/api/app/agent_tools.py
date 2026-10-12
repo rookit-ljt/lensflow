@@ -12,7 +12,7 @@ from .config import Settings
 class AskUserArguments(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
-    schema_version: Literal["1.0"]
+    schema_version: Literal["1.0"] = "1.0"
     form_id: Identifier
     message: str = Field(min_length=1, max_length=16000)
     title: Label

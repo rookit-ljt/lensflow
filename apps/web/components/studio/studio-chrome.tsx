@@ -47,6 +47,8 @@ type StudioHeaderProps = {
   onLogout: () => Promise<void>;
   onRunShot: () => void;
   shotRunning?: boolean;
+  wallet?: import("@/lib/api").UserWallet | null;
+  onCreditsOpenChange?: (open: boolean) => void;
 };
 
 export function StudioHeader({
@@ -64,6 +66,8 @@ export function StudioHeader({
   onLogout,
   onRunShot,
   shotRunning = false,
+  wallet,
+  onCreditsOpenChange,
 }: StudioHeaderProps) {
   return (
     <header className="studio-header">
@@ -132,8 +136,28 @@ export function StudioHeader({
           </TooltipTrigger>
           <TooltipContent>配置 LLM Key 与模型</TooltipContent>
         </Tooltip>
-        {/* <Button className="header-icon-button" type="button" variant="outline" size="icon" disabled aria-label="分享"><Share2 /></Button> */}
-        {/* <Badge variant="outline" className="credit-pill"><Sparkles />100 <strong>开通会员</strong></Badge> */}
+        {onCreditsOpenChange ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  className="credit-pill"
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onCreditsOpenChange(true)}
+                  aria-label="查看积分中心"
+                >
+                  <Sparkles className="size-3.5 text-amber-400" />
+                  <span>{wallet ? `${wallet.balance} 积分` : "积分"}</span>
+                </Button>
+              }
+            />
+            <TooltipContent>
+              {wallet ? `可用积分: ${wallet.balance} 点（点击管理积分）` : "查看积分中心"}
+            </TooltipContent>
+          </Tooltip>
+        ) : null}
         <Button className="agent-button" type="button" variant="outline" onClick={() => onAgentOpenChange(true)}><Bot />Chat Agent</Button>
         <div className="header-user minimal-user" title={currentUser.email}>
           <span>{currentUser.display_name.slice(0, 1).toUpperCase()}</span>

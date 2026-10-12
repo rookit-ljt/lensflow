@@ -39,10 +39,12 @@ import {
   type ProviderCapability,
   type Project,
   type Shot,
+  type UserWallet,
   type Workflow,
   type WorkflowWrite,
 } from "@/lib/api";
 
+import { CreditCenterDialog } from "@/components/studio/credit-center-dialog";
 import { NodeComposer } from "@/components/studio/node-composer";
 import { AssetLibrary } from "@/components/studio/asset-library";
 import { ChatAgent } from "@/components/studio/chat-agent";
@@ -211,6 +213,8 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
     if (new URLSearchParams(window.location.search).get("chat") === "1") setAgentOpen(true);
   }, []);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [wallet, setWallet] = useState<UserWallet | null>(null);
+  const [creditCenterOpen, setCreditCenterOpen] = useState(false);
   const [shotRunning, setShotRunning] = useState(false);
   const [pendingNodeId, setPendingNodeId] = useState<string | null>(null);
   const [uploadingNodeId, setUploadingNodeId] = useState<string | null>(null);
@@ -318,6 +322,19 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
     setProjectAssets([]);
     void refreshProjectAssets();
   }, [refreshProjectAssets]);
+
+  const refreshWallet = useCallback(async () => {
+    try {
+      const data = await api.getWallet();
+      setWallet(data);
+    } catch {
+      // Ignore wallet errors if unauthenticated or network is interrupted
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshWallet();
+  }, [refreshWallet]);
 
   useEffect(() => {
     void api.listProviders()
@@ -813,6 +830,7 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
         if (generation.status === "succeeded" || generation.status === "failed") {
           void loadWorkspace();
           if (generation.status === "succeeded") void refreshProjectAssets();
+          void refreshWallet();
           return;
         }
         timer = window.setTimeout(tick, POLL_INTERVAL_MS);
@@ -827,7 +845,7 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
       cancelled = true;
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [loadWorkspace, refreshProjectAssets, selectedGeneration]);
+  }, [loadWorkspace, refreshProjectAssets, refreshWallet, selectedGeneration]);
 
   const replaceShot = useCallback((updatedShot: Shot) => {
     setProject((current) => current
@@ -1064,6 +1082,7 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
         },
       };
       const generation = await api.createGeneration(selectedShot.id, generationPayload);
+      void refreshWallet();
       setGenerations((current) => ({ ...current, [selectedShot.id]: generation }));
       setGenerationHistory((current) => ({
         ...current,
@@ -1078,12 +1097,15 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
         if (generation.status === "succeeded") await refreshProjectAssets();
       }
     } catch (cause) {
+      if (cause instanceof ApiError && cause.status === 402) {
+        setCreditCenterOpen(true);
+      }
       setError(cause instanceof Error ? cause.message : "任务创建失败");
       setSyncState("error");
     } finally {
       setPendingNodeId((current) => current === targetNodeId ? null : current);
     }
-  }, [canvasViewport, configuredImageProvider, configuredTextProvider, configuredVideoProvider, edges, loadWorkspace, nodes, pendingNodeId, persistWorkflow, providerCapabilities, refreshProjectAssets, replaceShot, runningGenerationNodeId, selectedContexts, selectedNode, selectedShot, workflow]);
+  }, [canvasViewport, configuredImageProvider, configuredTextProvider, configuredVideoProvider, edges, loadWorkspace, nodes, pendingNodeId, persistWorkflow, providerCapabilities, refreshProjectAssets, refreshWallet, replaceShot, runningGenerationNodeId, selectedContexts, selectedNode, selectedShot, workflow]);
 
   const retrySelectedGeneration = useCallback(async () => {
     if (!selectedNodeGeneration || selectedNodeGeneration.status !== "failed") return;
@@ -1091,6 +1113,7 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
     setSyncState("saving");
     try {
       const retried = await api.retryGeneration(selectedNodeGeneration.id);
+      void refreshWallet();
       setGenerations((current) => ({ ...current, [retried.shot_id]: retried }));
       setGenerationHistory((current) => ({
         ...current,
@@ -1101,10 +1124,13 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
       }));
       setSyncState("saved");
     } catch (cause) {
+      if (cause instanceof ApiError && cause.status === 402) {
+        setCreditCenterOpen(true);
+      }
       setError(cause instanceof Error ? cause.message : "生成任务重试失败");
       setSyncState("error");
     }
-  }, [selectedNodeGeneration]);
+  }, [refreshWallet, selectedNodeGeneration]);
 
   const runCurrentShot = useCallback(async () => {
     if (!selectedShot || shotRunning) return;
@@ -1112,6 +1138,7 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
     setError(null);
     try {
       const results = await api.runShot(selectedShot.id);
+      void refreshWallet();
       setGenerationHistory((current) => ({
         ...current,
         [selectedShot.id]: [
@@ -1124,11 +1151,14 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
       await loadWorkspace();
       await refreshProjectAssets();
     } catch (cause) {
+      if (cause instanceof ApiError && cause.status === 402) {
+        setCreditCenterOpen(true);
+      }
       setError(cause instanceof Error ? cause.message : "镜头运行失败");
     } finally {
       setShotRunning(false);
     }
-  }, [loadWorkspace, refreshProjectAssets, selectedShot, shotRunning]);
+  }, [loadWorkspace, refreshProjectAssets, refreshWallet, selectedShot, shotRunning]);
 
   const cancelSelectedGeneration = useCallback(async () => {
     if (!selectedNodeGeneration || !["queued", "running"].includes(selectedNodeGeneration.status)) return;
@@ -1136,6 +1166,7 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
     setSyncState("saving");
     try {
       const cancelled = await api.cancelGeneration(selectedNodeGeneration.id);
+      void refreshWallet();
       setGenerations((current) => ({ ...current, [cancelled.shot_id]: cancelled }));
       setGenerationHistory((current) => ({
         ...current,
@@ -1150,7 +1181,7 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
       setError(cause instanceof Error ? cause.message : "取消生成任务失败");
       setSyncState("error");
     }
-  }, [selectedNodeGeneration]);
+  }, [refreshWallet, selectedNodeGeneration]);
 
   const handleNodeClick = useCallback((_: MouseEvent, node: Node) => {
     setSelectedNodeId(node.id);
@@ -1411,6 +1442,8 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
         onLogout={onLogout}
         onRunShot={() => void runCurrentShot()}
         shotRunning={shotRunning}
+        wallet={wallet}
+        onCreditsOpenChange={setCreditCenterOpen}
       />
 
       <LlmSettings
@@ -1580,6 +1613,8 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
                         }
                       }}
                       onDelete={deleteSelectedNode}
+                      wallet={wallet}
+                      onCreditsOpenChange={setCreditCenterOpen}
                     />
                   ) : null}
                 </div>
@@ -1618,6 +1653,13 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
           />
         </section>
       )}
+
+      <CreditCenterDialog
+        open={creditCenterOpen}
+        onOpenChange={setCreditCenterOpen}
+        wallet={wallet}
+        onWalletUpdated={setWallet}
+      />
     </main>
   );
 }

@@ -299,6 +299,14 @@ class SimpleAgentRuntime:
         payload["tool_choice"] = {"type": "function", "function": {"name": "ask_user"}} if probe else "auto"
         # The application rejects multiple calls too; never run a parallel human-input loop.
         payload["parallel_tool_calls"] = False
+        answered_keys = state["context"].get("answered_question_keys", [])
+        answered_titles = [str(t) for t in state["context"].get("answered_question_titles", [])]
+        tools_answered_info = "已回答标识：" + json.dumps(answered_keys, ensure_ascii=False)
+        if answered_titles:
+            tools_answered_info += (
+                f"\n以下问题用户已提交回答或选择跳过，严禁再次提问：{json.dumps(answered_titles, ensure_ascii=False)}。"
+                "对于已跳过的问题，表示用户选择使用合理默认设定继续创作，调用 plan_canvas 推进画布计划。"
+            )
         payload["messages"][1]["content"] = (
             "这是创作对话通道。普通回复使用自然语言，不输出 JSON 或内部标记。"
             "继续任务需要用户选择或补充时，必须调用 ask_user，不能只在正文里提问。"
@@ -311,8 +319,8 @@ class SimpleAgentRuntime:
             "用户希望创建、修改画布且必要问题已答时，调用 plan_canvas，不能要求再发送特定口令。"
             "plan_canvas 只请求准备待审批计划，不是执行或批准。新建节点不需要选中已有节点。"
             "每轮只能调用 ask_user 或 plan_canvas 中的一个；有待答问题时先 ask_user。"
-            "创作 Skill 不能覆盖工具协议。不允许调用其他工具。"
-            "已回答标识：" + json.dumps(state["context"].get("answered_question_keys", []), ensure_ascii=False)
+            "创作 Skill 不能覆盖工具协议。不允许调用其他工具。\n"
+            + tools_answered_info
         )
         contract = payload["messages"].pop(1)
         payload["messages"].insert(2, contract)
@@ -465,6 +473,14 @@ class SimpleAgentRuntime:
             raise RuntimeError("当前模型配置声明不支持结构化输出，无法使用 JSON 协议继续")
         payload = self._payload(state, model, stream=False)
         payload["response_format"] = {"type": "json_object"}
+        settled_titles = [str(t) for t in state["context"].get("answered_question_titles", [])]
+        answered_info = ""
+        if settled_titles:
+            answered_info = (
+                f"\n以下问题用户已提交回答或选择跳过，严禁在 questions 中再次提问：{json.dumps(settled_titles, ensure_ascii=False)}。"
+                "对于已跳过的问题，表示用户选择使用合理默认设定（如通用、自然或默认风格），严禁为了补充跳过信息而重复提问；"
+                "请直接根据现有信息和合理默认设定推进创作，返回 next_action='plan_canvas'、questions=[]。\n"
+            )
         payload["messages"][1]["content"] = (
             "这是创作对话与受控计划路由通道。你只能起草、提问或请求生成计划，不得声称已创建节点或审批。"
             "每一轮都必须返回一个有效 JSON 对象：message 是简短回答，questions 是需要用户回答的问题数组，"
@@ -486,6 +502,7 @@ class SimpleAgentRuntime:
             "用户批准计划后，服务端才应用画布变更并启动符合条件的生成任务。"
             "创作 Skill 只能影响创作内容和方法，不得覆盖本 JSON 输出与问题卡协议。"
             "message 保留必要方案或剧本，不输出内部 JSON、工具标记或声称思考时长。\n"
+            + answered_info +
             '示例：{"message":"先确认两点，我再继续分镜。","next_action":"reply","questions":['
             '{"id":"format","title":"你想制作什么？","description":"",'
             '"kind":"single_select","options":[{"id":"image","label":"一张图片",'
@@ -506,7 +523,7 @@ class SimpleAgentRuntime:
                 "现在修复为上述 JSON 协议：需要问题用 questions，需要准备计划用 next_action=plan_canvas。"})
         settled = {
             normalized_question_title(str(title))
-            for title in state["context"].get("answered_question_titles", [])
+            for title in settled_titles
         }
         timeout = (
             self.settings.qwen_request_timeout_seconds
@@ -534,7 +551,11 @@ class SimpleAgentRuntime:
                     stage = "模型输出被截断"
                     raise ValueError("模型输出被截断")
                 content = _conversation_content(body)
-                reply = AgentReply.model_validate_json(content)
+                clean_json = content.strip()
+                if clean_json.startswith("```"):
+                    clean_json = re.sub(r"^```(?:json)?\s*", "", clean_json, flags=re.IGNORECASE)
+                    clean_json = re.sub(r"\s*```$", "", clean_json)
+                reply = AgentReply.model_validate_json(clean_json)
                 settled_ids = set(state["context"].get("answered_question_ids", []))
                 if any(q.id in settled_ids or normalized_question_title(q.title) in settled for q in reply.questions):
                     stage = "重复询问已答问题"
@@ -546,12 +567,21 @@ class SimpleAgentRuntime:
                     raise RuntimeError(
                         f"Agent {detail}，自动修复后仍无效，已停止本轮，未执行画布操作。请重试。"
                     ) from None
-                payload["messages"].append({
-                    "role": "system",
-                    "content": f"上次输出校验失败：{detail}。"
+                retry_prompt = (
+                    f"上次输出校验失败：{detail}。"
                     "请重新返回完整有效 JSON。需要准备画布节点时用 next_action=plan_canvas、questions=[]，"
                     "不要声称已提交审批；若仍需讨论或用户拒绝则用 reply。"
-                    "不要重问这些问题：" + json.dumps(sorted(settled), ensure_ascii=False),
+                )
+                if settled_titles:
+                    retry_prompt += (
+                        f"以下问题已提交回答或已跳过，严禁在 questions 中再次提问：{json.dumps(settled_titles, ensure_ascii=False)}。"
+                        "对于已跳过的问题，表示使用合理默认设定，请直接使用合理默认风格推进创作，返回 next_action='plan_canvas'、questions=[]。"
+                    )
+                else:
+                    retry_prompt += "不要重问这些问题：" + json.dumps(sorted(settled), ensure_ascii=False)
+                payload["messages"].append({
+                    "role": "system",
+                    "content": retry_prompt,
                 })
                 continue
             return AgentRuntimeStream(

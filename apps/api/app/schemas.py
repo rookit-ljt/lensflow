@@ -179,6 +179,7 @@ class GenerationRead(BaseModel):
     output_url: str | None
     output_text: str | None
     error: str | None
+    cost_credits: int = 0
     created_at: datetime
     updated_at: datetime
 
@@ -495,3 +496,82 @@ class AgentEventRead(BaseModel):
     event_type: str
     payload: dict[str, Any]
     created_at: datetime
+
+
+class WalletRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    balance: int
+    frozen: int
+    total_earned: int
+    total_spent: int
+
+
+class CreditTransactionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    amount: int
+    balance_after: int
+    type: str
+    biz_type: str
+    biz_id: str | None
+    description: str
+    created_at: datetime
+
+
+class CreditPricingItem(BaseModel):
+    name: str
+    category: str
+    cost: int
+    unit: str
+    description: str
+
+
+class CreditPricingRead(BaseModel):
+    items: list[CreditPricingItem]
+
+
+class CreditEstimateRequest(BaseModel):
+    kind: str
+    provider: str
+    model: str | None = None
+    parameters: dict[str, Any] = Field(default_factory=dict)
+
+
+class CreditEstimateResponse(BaseModel):
+    cost: int
+    balance: int
+    sufficient: bool
+
+
+class CreditRedeemRequest(BaseModel):
+    code: str
+
+
+class CreditRedeemResponse(BaseModel):
+    credits_added: int
+    new_balance: int
+
+
+class CreditGrantRequest(BaseModel):
+    user_id: uuid.UUID
+    amount: int
+    description: str = ""
+
+
+class CreditGenerateCodesRequest(BaseModel):
+    count: int = 5
+    credits: int = 100
+    expires_days: int = 30
+
+
+class CreditCardCodeRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    code: str
+    credits: int
+    is_redeemed: bool
+    expires_at: datetime | None
+    created_at: datetime
+

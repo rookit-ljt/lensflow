@@ -39,6 +39,7 @@ def ensure_generation_columns() -> None:
         "max_tokens": "INTEGER NOT NULL DEFAULT 1200",
         "parameters": "JSON NOT NULL DEFAULT '{}'",
         "output_text": "TEXT",
+        "cost_credits": "INTEGER NOT NULL DEFAULT 0",
     }
     with engine.begin() as connection:
         for name, definition in columns.items():

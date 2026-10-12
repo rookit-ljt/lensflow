@@ -1,16 +1,16 @@
 """Validated question forms shared by model output and human-in-the-loop resume."""
 
 import re
-from typing import Annotated, Literal, Self
+from typing import Annotated, Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
 Identifier = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)]
 Label = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=240)]
 
 
 class QuestionOption(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    model_config = ConfigDict(extra="ignore", str_strip_whitespace=True)
 
     id: Identifier
     label: Label
@@ -18,20 +18,59 @@ class QuestionOption(BaseModel):
 
 
 class AgentQuestion(BaseModel):
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    model_config = ConfigDict(extra="ignore", str_strip_whitespace=True)
 
     id: Identifier
     title: Label
     description: str = Field(default="", max_length=1500)
     kind: Literal["single_select", "multi_select", "text"]
+    required: bool = True
     options: list[QuestionOption] = Field(default_factory=list, max_length=8)
+
+    @field_validator("options", mode="before")
+    @classmethod
+    def normalize_options(cls, v: Any) -> Any:
+        if v is None:
+            return []
+        if isinstance(v, dict):
+            normalized = []
+            for idx, (key, val) in enumerate(v.items()):
+                if isinstance(val, dict):
+                    item = dict(val)
+                    item.setdefault("id", str(key or f"opt_{idx + 1}"))
+                    item.setdefault(
+                        "label",
+                        str(val.get("label") or val.get("name") or val.get("title") or val.get("text") or key),
+                    )
+                    normalized.append(item)
+                elif isinstance(val, str):
+                    normalized.append({"id": str(key or f"opt_{idx + 1}"), "label": val})
+            return normalized
+        if isinstance(v, list):
+            normalized = []
+            for idx, item in enumerate(v):
+                if isinstance(item, str):
+                    normalized.append({"id": f"opt_{idx + 1}", "label": item})
+                elif isinstance(item, dict):
+                    d = dict(item)
+                    d.setdefault("id", f"opt_{idx + 1}")
+                    d.setdefault(
+                        "label",
+                        str(item.get("label") or item.get("name") or item.get("title") or item.get("text") or f"Option {idx + 1}"),
+                    )
+                    normalized.append(d)
+                else:
+                    normalized.append(item)
+            return normalized
+        return v
 
     @model_validator(mode="after")
     def valid_options(self) -> Self:
-        if self.kind != "text" and len(self.options) < 2:
+        if self.kind == "text":
+            self.options = []
+            return self
+        if len(self.options) < 2:
             raise ValueError("选择题需要至少两个选项；开放问题请用 text")
-        if self.kind == "text" and self.options:
-            raise ValueError("开放问题不能附带选项")
         if len({item.id for item in self.options}) != len(self.options):
             raise ValueError("同一问题的选项 ID 不能重复")
         return self

@@ -49,6 +49,11 @@ class QwenImageProvider:
             raise RuntimeError("未配置 QWEN_API_KEY，无法调用千问图片模型")
         if not model:
             raise RuntimeError("未配置千问图片模型；请设置 QWEN_IMAGE_MODEL")
+        if (
+            model in {"qwen-image-plus", "qwen-image"}
+            and "dashscope-intl" in self.settings.qwen_image_base_url
+        ):
+            model = "qwen-image-2.0"
         image_contexts = tuple(
             context
             for context in request.contexts

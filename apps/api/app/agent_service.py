@@ -22,6 +22,14 @@ from .agent_runtime import (
 )
 from .agent_tools import tool_exchange
 from .config import get_settings
+from .credits_service import (
+    InsufficientCreditsError,
+    calculate_agent_run_cost,
+    calculate_generation_cost,
+    freeze_credits,
+    refund_credits,
+    settle_credits,
+)
 from .database import SessionLocal
 from .db_models import (
     AgentApproval,
@@ -37,6 +45,7 @@ from .db_models import (
     Generation,
     GenerationStatus,
     Shot,
+    User,
     Workflow,
 )
 from .schemas import AgentApprovalRead, AgentInterruptRead
@@ -957,6 +966,16 @@ def execute_agent_run(run_id: str) -> None:
             run.current_step = "completed"
             run.completed_at = datetime.now(UTC)
             thread.updated_at = datetime.now(UTC)
+            agent_cost = calculate_agent_run_cost(settings.agent_provider)
+            if agent_cost > 0 and thread.project.user_id is not None:
+                settle_credits(
+                    session=session,
+                    user_id=thread.project.user_id,
+                    amount=agent_cost,
+                    biz_type="agent_run",
+                    biz_id=str(run.id),
+                    description="Chat Agent 对话完成结算 (-1 积分)",
+                )
             append_agent_event(
                 session,
                 run,
@@ -985,6 +1004,16 @@ def execute_agent_run(run_id: str) -> None:
             run.current_step = "failed"
             run.error = str(exc)
             run.completed_at = datetime.now(UTC)
+            agent_cost = calculate_agent_run_cost(settings.agent_provider)
+            if agent_cost > 0 and run.thread and run.thread.project and run.thread.project.user_id is not None:
+                refund_credits(
+                    session=session,
+                    user_id=run.thread.project.user_id,
+                    amount=agent_cost,
+                    biz_type="agent_run",
+                    biz_id=str(run.id),
+                    description="Chat Agent 执行异常，积分已返还",
+                )
             append_agent_event(session, run, "run.failed", {"error": str(exc)})
             session.commit()
 
@@ -1320,6 +1349,21 @@ def _resume_selected_node_generation(
         max_tokens=max_tokens,
         parameters=parameters,
     )
+    cost = calculate_generation_cost(mode, provider, model, parameters)
+    user = thread.project.user if hasattr(thread.project, "user") else session.get(User, thread.project.user_id)
+    if cost > 0 and user is not None:
+        try:
+            freeze_credits(
+                session=session,
+                user=user,
+                amount=cost,
+                biz_type=f"{mode}_generation",
+                biz_id=str(generation.id),
+                description=f"Agent 触发 {mode} 生成任务预扣积分",
+            )
+        except InsufficientCreditsError as exc:
+            raise CanvasPatchError(str(exc))
+    generation.cost_credits = cost
     session.add(generation)
     session.flush()
 

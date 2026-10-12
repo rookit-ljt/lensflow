@@ -69,8 +69,10 @@ from .db_models import (
     Shot,
     ShotStatus,
     StoredUpload,
+    CreditTransaction,
     User,
     UserIdentity,
+    UserWallet,
     Workflow,
     WorkflowNode,
 )
@@ -116,6 +118,30 @@ from .schemas import (
     UserRead,
     WorkflowRead,
     WorkflowWrite,
+    WalletRead,
+    CreditPricingRead,
+    CreditPricingItem,
+    CreditEstimateRequest,
+    CreditEstimateResponse,
+    CreditRedeemRequest,
+    CreditRedeemResponse,
+    CreditGrantRequest,
+    CreditGenerateCodesRequest,
+    CreditCardCodeRead,
+    CreditTransactionRead,
+)
+from .credits_service import (
+    PRICING_CATALOG,
+    InsufficientCreditsError,
+    calculate_agent_run_cost,
+    calculate_generation_cost,
+    freeze_credits,
+    generate_card_codes,
+    get_or_create_wallet,
+    grant_credits,
+    redeem_code,
+    refund_credits,
+    settle_credits,
 )
 from .tasks import generate_shot
 from .uploads import detect_image_type, find_uploaded_image, store_uploaded_image
@@ -153,6 +179,19 @@ def _fail_interrupted_generations() -> None:
         for generation in orphans:
             generation.status = GenerationStatus.FAILED
             generation.error = "服务重启导致生成中断，请点击重试"
+            if (
+                generation.cost_credits > 0
+                and generation.shot is not None
+                and generation.shot.project.user_id is not None
+            ):
+                refund_credits(
+                    session=session,
+                    user_id=generation.shot.project.user_id,
+                    amount=generation.cost_credits,
+                    biz_type=f"{generation.kind}_generation",
+                    biz_id=str(generation.id),
+                    description="服务重启生成中断，预扣积分已自动返还",
+                )
             if generation.shot is not None:
                 generation.shot.status = ShotStatus.READY
         session.commit()
@@ -191,6 +230,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
+    allow_origin_regex=r".*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -491,6 +531,7 @@ def register_user(
             session.execute(
                 update(Project).where(Project.user_id.is_(None)).values(user_id=user.id)
             )
+        get_or_create_wallet(session, user)
         token = create_auth_session(session, user, settings)
         session.commit()
     except IntegrityError as exc:
@@ -1498,6 +1539,20 @@ def create_agent_run(
         )
         session.add(run)
         session.flush()
+
+        agent_cost = calculate_agent_run_cost(settings.agent_provider)
+        if agent_cost > 0:
+            try:
+                freeze_credits(
+                    session=session,
+                    user=user,
+                    amount=agent_cost,
+                    biz_type="agent_run",
+                    biz_id=str(run.id),
+                    description="Chat Agent 思考与对话预扣积分",
+                )
+            except InsufficientCreditsError as exc:
+                raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail=str(exc))
         user_message = AgentMessage(
             thread_id=thread.id,
             run_id=run.id,
@@ -1850,7 +1905,28 @@ def create_generation(
     if active_generation is not None:
         raise HTTPException(status_code=409, detail="Shot already has an active generation")
 
+    cost = calculate_generation_cost(
+        kind=payload.kind,
+        provider=payload.provider,
+        model=payload.model,
+        parameters=payload.parameters,
+    )
+    generation_id = uuid.uuid4()
+    if cost > 0:
+        try:
+            freeze_credits(
+                session=session,
+                user=user,
+                amount=cost,
+                biz_type=f"{payload.kind}_generation",
+                biz_id=str(generation_id),
+                description=f"{payload.kind} 生成任务预扣积分",
+            )
+        except InsufficientCreditsError as exc:
+            raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail=str(exc))
+
     generation = Generation(
+        id=generation_id,
         shot_id=shot_id,
         provider=payload.provider,
         kind=payload.kind,
@@ -1872,6 +1948,7 @@ def create_generation(
         temperature=payload.temperature,
         max_tokens=payload.max_tokens,
         parameters=payload.parameters,
+        cost_credits=cost,
     )
     session.add(generation)
     session.commit()
@@ -1914,7 +1991,8 @@ def run_shot_workflow(
     if len(ordered) != len(nodes):
         raise HTTPException(status_code=409, detail="工作流存在循环连线，无法运行")
 
-    results: list[Generation] = []
+    candidate_payloads: list[GenerationCreate] = []
+    total_estimated_cost = 0
     for node_id in ordered:
         node = nodes[node_id]
         if node.type != "generator":
@@ -1928,22 +2006,37 @@ def run_shot_workflow(
         prompt = str(node.config.get("prompt") or shot.visual_prompt or "").strip()
         if not prompt:
             continue
-        payload = GenerationCreate(
-            provider=provider,
-            kind=mode,
-            node_id=node.id,
-            prompt=prompt,
-            model=str(node.config.get("model") or "") or None,
-            temperature=float(node.config.get("temperature", 0.7)),
-            max_tokens=int(node.config.get("max_tokens", 2400)),
-            parameters={
-                "context_source_node_ids": [str(source_id) for source_id in outgoing if node_id in outgoing[source_id]],
-                **{key: value for key, value in node.config.items() if key not in {"mode", "provider", "model", "prompt"}},
-            },
+        model_name = str(node.config.get("model") or "") or None
+        node_params = {
+            "context_source_node_ids": [str(source_id) for source_id in outgoing if node_id in outgoing[source_id]],
+            **{key: value for key, value in node.config.items() if key not in {"mode", "provider", "model", "prompt"}},
+        }
+        total_estimated_cost += calculate_generation_cost(mode, provider, model_name, node_params)
+        candidate_payloads.append(
+            GenerationCreate(
+                provider=provider,
+                kind=mode,
+                node_id=node.id,
+                prompt=prompt,
+                model=model_name,
+                temperature=float(node.config.get("temperature", 0.7)),
+                max_tokens=int(node.config.get("max_tokens", 2400)),
+                parameters=node_params,
+            )
         )
-        results.append(create_generation(shot_id, payload, background_tasks, session, user))
-    if not results:
+    if not candidate_payloads:
         raise HTTPException(status_code=409, detail="当前镜头没有可运行的生成节点")
+
+    wallet = get_or_create_wallet(session, user)
+    if total_estimated_cost > 0 and wallet.balance < total_estimated_cost:
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail=f"积分不足：整镜头运行预计需要 {total_estimated_cost} 积分，当前可用 {wallet.balance} 积分",
+        )
+
+    results: list[Generation] = []
+    for payload in candidate_payloads:
+        results.append(create_generation(shot_id, payload, background_tasks, session, user))
     return results
 
 
@@ -2004,7 +2097,28 @@ def retry_generation(
         raise HTTPException(status_code=409, detail="当前镜头已有生成任务正在处理")
     parameters = dict(source.parameters or {})
     parameters.pop("cancel_requested", None)
+    cost = calculate_generation_cost(
+        kind=source.kind,
+        provider=source.provider,
+        model=source.model,
+        parameters=parameters,
+    )
+    retry_id = uuid.uuid4()
+    if cost > 0:
+        try:
+            freeze_credits(
+                session=session,
+                user=user,
+                amount=cost,
+                biz_type=f"{source.kind}_generation",
+                biz_id=str(retry_id),
+                description=f"{source.kind} 任务重试预扣积分",
+            )
+        except InsufficientCreditsError as exc:
+            raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail=str(exc))
+
     retry = Generation(
+        id=retry_id,
         shot_id=source.shot_id,
         provider=source.provider,
         kind=source.kind,
@@ -2014,6 +2128,7 @@ def retry_generation(
         temperature=source.temperature,
         max_tokens=source.max_tokens,
         parameters=parameters,
+        cost_credits=cost,
     )
     session.add(retry)
     session.commit()
@@ -2040,6 +2155,15 @@ def cancel_generation(
     generation.status = GenerationStatus.FAILED
     generation.error = "任务已取消，可点击重试继续生成"
     generation.updated_at = datetime.now(UTC)
+    if generation.cost_credits > 0:
+        refund_credits(
+            session=session,
+            user_id=user.id,
+            amount=generation.cost_credits,
+            biz_type=f"{generation.kind}_generation",
+            biz_id=str(generation.id),
+            description=f"{generation.kind} 任务已取消，积分原路返还",
+        )
     generation.shot.status = ShotStatus.READY
     session.commit()
     session.refresh(generation)
@@ -2235,3 +2359,126 @@ def save_workflow(
     except WorkflowVersionConflict as cause:
         session.rollback()
         raise HTTPException(status_code=409, detail=str(cause)) from cause
+
+
+# ---------------------------------------------------------------------------
+# Credits & Quota System Endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.get(
+    "/api/credits/wallet",
+    response_model=WalletRead,
+    tags=["credits"],
+)
+def get_user_wallet(
+    session: DatabaseSession,
+    user: CurrentUser,
+) -> UserWallet:
+    return get_or_create_wallet(session, user)
+
+
+@app.get(
+    "/api/credits/pricing",
+    response_model=CreditPricingRead,
+    tags=["credits"],
+)
+def get_credits_pricing() -> CreditPricingRead:
+    return CreditPricingRead(items=[CreditPricingItem(**item) for item in PRICING_CATALOG])
+
+
+@app.post(
+    "/api/credits/estimate",
+    response_model=CreditEstimateResponse,
+    tags=["credits"],
+)
+def estimate_credits_cost(
+    payload: CreditEstimateRequest,
+    session: DatabaseSession,
+    user: CurrentUser,
+) -> CreditEstimateResponse:
+    cost = calculate_generation_cost(
+        kind=payload.kind,
+        provider=payload.provider,
+        model=payload.model,
+        parameters=payload.parameters,
+    )
+    wallet = get_or_create_wallet(session, user)
+    return CreditEstimateResponse(
+        cost=cost,
+        balance=wallet.balance,
+        sufficient=wallet.balance >= cost,
+    )
+
+
+@app.get(
+    "/api/credits/transactions",
+    response_model=list[CreditTransactionRead],
+    tags=["credits"],
+)
+def list_credit_transactions(
+    session: DatabaseSession,
+    user: CurrentUser,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+) -> list[CreditTransaction]:
+    get_or_create_wallet(session, user)
+    session.commit()
+    statement = (
+        select(CreditTransaction)
+        .where(CreditTransaction.user_id == user.id)
+        .order_by(CreditTransaction.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    return list(session.scalars(statement))
+
+
+@app.post(
+    "/api/credits/redeem",
+    response_model=CreditRedeemResponse,
+    tags=["credits"],
+)
+def redeem_credit_code(
+    payload: CreditRedeemRequest,
+    session: DatabaseSession,
+    user: CurrentUser,
+) -> CreditRedeemResponse:
+    credits_added = redeem_code(session, user, payload.code)
+    wallet = get_or_create_wallet(session, user)
+    session.commit()
+    return CreditRedeemResponse(
+        credits_added=credits_added,
+        new_balance=wallet.balance,
+    )
+
+
+@app.post(
+    "/api/admin/credits/grant",
+    response_model=WalletRead,
+    tags=["credits"],
+)
+def admin_grant_credits(
+    payload: CreditGrantRequest,
+    session: DatabaseSession,
+    user: CurrentUser,
+) -> UserWallet:
+    wallet = grant_credits(session, payload.user_id, payload.amount, payload.description)
+    session.commit()
+    return wallet
+
+
+@app.post(
+    "/api/admin/credits/generate-codes",
+    response_model=list[CreditCardCodeRead],
+    tags=["credits"],
+)
+def admin_generate_card_codes(
+    payload: CreditGenerateCodesRequest,
+    session: DatabaseSession,
+    user: CurrentUser,
+) -> list[CreditCardCodeRead]:
+    cards = generate_card_codes(session, payload.count, payload.credits, payload.expires_days)
+    session.commit()
+    return [CreditCardCodeRead.model_validate(card) for card in cards]
+

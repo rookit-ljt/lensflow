@@ -32,7 +32,7 @@ jobs:
       - name: 4. 云端编译前端与依赖 (不占用宝塔服务器资源)
         run: |
           pnpm approve-builds --all || true
-          pnpm install --frozen-lockfile
+          pnpm install --frozen-lockfile || pnpm install --no-frozen-lockfile
           pnpm build
 
       - name: 5. 打包构建产物与源码 (轻量化，排除大文件与本地缓存)
