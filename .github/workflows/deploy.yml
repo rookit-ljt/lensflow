@@ -83,7 +83,8 @@ jobs:
               apps/api/.venv/bin/pip install -e 'apps/api[dev]' --quiet || true
             fi
 
-            echo "🔄 [3/3] 平滑重载 PM2 服务..."
-            pm2 reload ecosystem.config.cjs || pm2 restart ecosystem.config.cjs
+            echo "🔄 [3/3] 平滑重载或拉起 PM2 服务..."
+            pm2 restart ecosystem.config.cjs --update-env || pm2 start ecosystem.config.cjs
+            pm2 save
 
             echo "✅ Lensflow 自动部署成功！"
