@@ -37,7 +37,8 @@ jobs:
 
       - name: 5. 打包构建产物与源码 (轻量化，排除大文件与本地缓存)
         run: |
-          tar -czf release.tar.gz \
+          tar --warning=no-file-changed -czf /tmp/release.tar.gz \
+            --exclude='release.tar.gz*' \
             --exclude='node_modules' \
             --exclude='apps/api/.venv' \
             --exclude='apps/web/.next-dev' \
@@ -47,6 +48,7 @@ jobs:
             --exclude='*.log' \
             --exclude='__pycache__' \
             .
+          mv /tmp/release.tar.gz ./release.tar.gz
 
       - name: 6. 上传部署包至宝塔服务器
         uses: appleboy/scp-action@v0.1.7
