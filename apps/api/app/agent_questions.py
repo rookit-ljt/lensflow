@@ -3,7 +3,14 @@
 import re
 from typing import Annotated, Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 Identifier = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=80)]
 Label = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=240)]

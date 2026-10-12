@@ -1,18 +1,16 @@
 import uuid
+
 from conftest import authenticated_client
 
 from app.credits_service import (
     InsufficientCreditsError,
     calculate_generation_cost,
     freeze_credits,
-    generate_card_codes,
-    get_or_create_wallet,
-    redeem_code,
     refund_credits,
     settle_credits,
 )
 from app.database import SessionLocal
-from app.db_models import User, UserWallet
+from app.db_models import User
 
 
 def test_pricing_calculation():
@@ -90,7 +88,7 @@ def test_credit_freeze_and_insufficient_credits():
         assert gen_res.status_code == 202
 
         # Now let's test wallet operations directly
-        with SessionLocal() as session:
+        with SessionLocal():
             # Check transactions
             tx_res = client.get("/api/credits/transactions")
             assert tx_res.status_code == 200
