@@ -42,3 +42,5 @@ jobs:
         working-directory: apps/api
         env:
           DATABASE_URL: sqlite://
+          QWEN_API_KEY: "test-mock-key"
+          CELERY_TASK_ALWAYS_EAGER: "true"
