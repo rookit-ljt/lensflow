@@ -6,7 +6,7 @@ from threading import Barrier
 
 import httpx
 import pytest
-from conftest import authenticated_client
+from conftest import admin_client, authenticated_client
 from pydantic import ValidationError
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
@@ -429,7 +429,7 @@ def test_capability_probe_is_one_request_without_persistence(monkeypatch):
             return SimpleAgentRuntime(self.settings, llm)._respond_tools(state(), probe=True)
 
     monkeypatch.setattr(SimpleAgentRuntime, "test_tool_calling", probe)
-    with authenticated_client() as client:
+    with admin_client() as client:
         before = client.get("/api/projects").json()
         result = client.post("/api/settings/test", json={
             "provider": "qwen", "kind": "text", "model": "test-model",

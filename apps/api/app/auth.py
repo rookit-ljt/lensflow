@@ -139,11 +139,29 @@ def get_or_create_local_user(session: Session) -> User:
             email=local_email,
             display_name="本地用户",
             password_hash="local-only",
+            is_admin=True,
         )
         session.add(user)
+        session.commit()
+        session.refresh(user)
+    elif not user.is_admin:
+        user.is_admin = True
         session.commit()
         session.refresh(user)
     return user
 
 
 CurrentUser = Annotated[User, Depends(require_user)]
+
+
+def require_admin(user: CurrentUser) -> User:
+    """Ensure the authenticated user has administrative privileges."""
+    if not user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="需要管理员权限",
+        )
+    return user
+
+
+AdminUser = Annotated[User, Depends(require_admin)]

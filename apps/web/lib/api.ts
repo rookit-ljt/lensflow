@@ -24,6 +24,7 @@ export interface CurrentUser {
   id: string;
   email: string;
   display_name: string;
+  is_admin?: boolean;
   created_at: string;
 }
 
@@ -497,6 +498,13 @@ export const api = {
       throw new Error(body?.detail ?? `上传失败（${response.status}）`);
     }
     return response.json() as Promise<UploadedAsset>;
+  },
+  listUserAssets: (params: { kind?: string; q?: string } = {}) => {
+    const query = new URLSearchParams();
+    if (params.kind) query.set("kind", params.kind);
+    if (params.q) query.set("q", params.q);
+    const suffix = query.toString() ? `?${query.toString()}` : "";
+    return request<ProjectAsset[]>(`/api/assets${suffix}`);
   },
   listAssets: (projectId: string, params: { kind?: string; q?: string } = {}) => {
     const query = new URLSearchParams();

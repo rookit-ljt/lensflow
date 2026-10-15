@@ -116,3 +116,34 @@ def test_google_login_does_not_silently_link_password_account(monkeypatch) -> No
         response = client.post("/api/auth/google", json={"credential": "z" * 120})
         assert response.status_code == 409
         assert "密码账号" in response.json()["detail"]
+
+
+def test_admin_rbac_permissions() -> None:
+    from conftest import admin_client, authenticated_client
+
+    with authenticated_client() as normal_client:
+        # Normal user should see is_admin=False on /api/auth/me
+        me = normal_client.get("/api/auth/me").json()
+        assert me["is_admin"] is False
+
+        # Normal user should be rejected from admin endpoints
+        assert normal_client.post(
+            "/api/admin/credits/grant",
+            json={"user_id": me["id"], "amount": 100, "description": "Hacked grant"},
+        ).status_code == 403
+        assert normal_client.post(
+            "/api/admin/credits/generate-codes",
+            json={"count": 1, "credits": 100},
+        ).status_code == 403
+
+    with admin_client() as admin:
+        me = admin.get("/api/auth/me").json()
+        assert me["is_admin"] is True
+
+        # Admin user can grant credits and generate codes
+        grant_res = admin.post(
+            "/api/admin/credits/grant",
+            json={"user_id": me["id"], "amount": 50, "description": "Admin bonus"},
+        )
+        assert grant_res.status_code == 200
+

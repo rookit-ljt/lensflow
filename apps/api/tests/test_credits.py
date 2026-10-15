@@ -1,6 +1,6 @@
 import uuid
 
-from conftest import authenticated_client
+from conftest import admin_client, authenticated_client
 
 from app.credits_service import (
     InsufficientCreditsError,
@@ -96,15 +96,24 @@ def test_credit_freeze_and_insufficient_credits():
 
 
 def test_card_code_redeem():
-    with authenticated_client() as client:
-        # Admin generate a code
-        gen_res = client.post(
+    with authenticated_client() as normal_user:
+        # Non-admin attempting to generate codes should be rejected with 403 Forbidden
+        forbidden_res = normal_user.post(
+            "/api/admin/credits/generate-codes",
+            json={"count": 1, "credits": 50},
+        )
+        assert forbidden_res.status_code == 403
+
+    with admin_client() as admin:
+        # Admin generates a code
+        gen_res = admin.post(
             "/api/admin/credits/generate-codes",
             json={"count": 1, "credits": 50},
         )
         assert gen_res.status_code == 200
         code = gen_res.json()[0]["code"]
 
+    with authenticated_client() as client:
         # Initial wallet balance is 100
         w_before = client.get("/api/credits/wallet").json()["balance"]
 
