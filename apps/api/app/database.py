@@ -48,19 +48,26 @@ def ensure_generation_columns() -> None:
 
 
 def ensure_auth_columns() -> None:
-    """Keep existing local databases usable when authentication is introduced."""
+    """Keep existing databases usable when authentication and RBAC are introduced."""
     inspector = inspect(engine)
-    if "projects" not in inspector.get_table_names():
-        return
-    existing = {column["name"] for column in inspector.get_columns("projects")}
-    if "user_id" in existing:
-        return
-    column_type = "UUID" if engine.dialect.name == "postgresql" else "CHAR(32)"
-    with engine.begin() as connection:
-        connection.execute(text(f"ALTER TABLE projects ADD COLUMN user_id {column_type}"))
-        connection.execute(
-            text("CREATE INDEX IF NOT EXISTS ix_projects_user_id ON projects (user_id)")
-        )
+    table_names = set(inspector.get_table_names())
+
+    if "users" in table_names:
+        user_columns = {column["name"] for column in inspector.get_columns("users")}
+        if "is_admin" not in user_columns:
+            bool_type = "BOOLEAN NOT NULL DEFAULT FALSE" if engine.dialect.name == "postgresql" else "INTEGER NOT NULL DEFAULT 0"
+            with engine.begin() as connection:
+                connection.execute(text(f"ALTER TABLE users ADD COLUMN is_admin {bool_type}"))
+
+    if "projects" in table_names:
+        existing = {column["name"] for column in inspector.get_columns("projects")}
+        if "user_id" not in existing:
+            column_type = "UUID" if engine.dialect.name == "postgresql" else "CHAR(32)"
+            with engine.begin() as connection:
+                connection.execute(text(f"ALTER TABLE projects ADD COLUMN user_id {column_type}"))
+                connection.execute(
+                    text("CREATE INDEX IF NOT EXISTS ix_projects_user_id ON projects (user_id)")
+                )
 
 
 def ensure_workflow_columns() -> None:
