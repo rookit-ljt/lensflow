@@ -45,6 +45,7 @@ import {
 } from "@/lib/api";
 
 import { CreditCenterDialog } from "@/components/studio/credit-center-dialog";
+import { ImageEditorDialog } from "@/components/studio/image-editor-dialog";
 import { NodeComposer } from "@/components/studio/node-composer";
 import { AssetLibrary } from "@/components/studio/asset-library";
 import { ChatAgent } from "@/components/studio/chat-agent";
@@ -219,6 +220,12 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
   const [pendingNodeId, setPendingNodeId] = useState<string | null>(null);
   const [uploadingNodeId, setUploadingNodeId] = useState<string | null>(null);
   const [extractingFrameNodeId, setExtractingFrameNodeId] = useState<string | null>(null);
+  const [editingImage, setEditingImage] = useState<{
+    imageUrl: string;
+    title: string;
+    assetId?: string;
+    nodeId?: string;
+  } | null>(null);
   const [canvasViewport, setCanvasViewport] = useState({ x: 30, y: 90, zoom: 0.78 });
   const [flowSize, setFlowSize] = useState({ width: 0, height: 0 });
   const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false });
@@ -492,10 +499,154 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
       setExtractingFrameNodeId((current) => current === sourceNodeId ? null : current);
     }
   }, [configuredImageProvider, extractingFrameNodeId, nodes, providerCapabilities, selectedShot, setEdges, setNodes, shotGenerationHistory]);
+  const handleSaveEditedAsset = useCallback(async (
+    file: File,
+    meta: { width: number; height: number; aspectRatio: number }
+  ): Promise<ProjectAsset | void> => {
+    const uploaded = await api.uploadAsset(file, projectId);
+    await refreshProjectAssets();
+    const createdAsset: ProjectAsset = {
+      id: uploaded.asset_id ?? uploaded.id,
+      user_id: currentUser.id,
+      project_id: projectId,
+      shot_id: null,
+      source_upload_id: uploaded.id,
+      source_generation_id: null,
+      kind: "image",
+      role: "reference",
+      filename: uploaded.filename,
+      content_type: uploaded.content_type,
+      size: uploaded.size,
+      url: uploaded.url,
+      metadata_json: { source: "editor" },
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+    return createdAsset;
+  }, [currentUser.id, projectId, refreshProjectAssets]);
+
+  const handleUpdateNodeImage = useCallback(async (
+    nodeId: string,
+    asset: ProjectAsset,
+    aspectRatio: number
+  ) => {
+    if (!selectedShot) return;
+    setNodes((current) => current.map((node) => {
+      if (node.id !== nodeId) return node;
+      const currentAssets = uploadedAssets(node.data.config);
+      const updatedAssets = [
+        {
+          id: asset.source_upload_id ?? asset.id,
+          asset_id: asset.id,
+          filename: asset.filename,
+          kind: "image",
+          content_type: asset.content_type,
+          size: asset.size,
+          url: asset.url,
+        },
+        ...currentAssets.filter((item) => item.asset_id !== asset.id && item.id !== asset.id),
+      ];
+      const updatedConfig = {
+        ...node.data.config,
+        mode: "image",
+        uploaded_assets: updatedAssets,
+        source_image_url: asset.url,
+        source_image_aspect_ratio: aspectRatio,
+        aspect_ratio: Math.abs(aspectRatio - 1) < 0.05 ? "1:1" : aspectRatio < 1 ? "9:16" : "16:9",
+      };
+      const presentation = presentNode("generator", updatedConfig, selectedShot);
+      return {
+        ...node,
+        data: {
+          ...node.data,
+          config: updatedConfig,
+          ...presentation,
+          imageUrl: asset.url,
+          downloadUrl: asset.url,
+          imageAspectRatio: aspectRatio,
+          output: `已编辑素材 (${asset.filename})`,
+        },
+      };
+    }));
+    setSelectedNodeId(nodeId);
+  }, [selectedShot, setNodes]);
+
+  const handleCreateDerivedNode = useCallback(async (
+    sourceNodeId: string,
+    asset: ProjectAsset,
+    aspectRatio: number
+  ) => {
+    if (!selectedShot) return;
+    const sourceNode = nodes.find((node) => node.id === sourceNodeId);
+    const preferredImageProvider = providerCapabilities.find((provider) => (
+      provider.kind === "image"
+      && provider.configured
+      && (provider.id === "qwen" || provider.id === "google_genai")
+    )) ?? configuredImageProvider;
+    const id = crypto.randomUUID();
+    const config = {
+      node_id: id,
+      mode: "image",
+      title: `衍生-${asset.filename.replace(/\.[^.]+$/, "")}`,
+      prompt: "",
+      provider: preferredImageProvider?.id ?? "mock",
+      model: preferredImageProvider?.model ?? "mock-image",
+      aspect_ratio: Math.abs(aspectRatio - 1) < 0.05 ? "1:1" : aspectRatio < 1 ? "9:16" : "16:9",
+      resolution: "2K",
+      quality: "标准",
+      count: 1,
+      seed: -1,
+      uploaded_assets: [{
+        id: asset.source_upload_id ?? asset.id,
+        asset_id: asset.id,
+        filename: asset.filename,
+        kind: "image",
+        content_type: asset.content_type,
+        size: asset.size,
+        url: asset.url,
+      }],
+      source_image_url: asset.url,
+      source_image_aspect_ratio: aspectRatio,
+    };
+    const presentation = presentNode("generator", config, selectedShot);
+    const posX = sourceNode ? sourceNode.position.x + (sourceNode.measured?.width ?? 320) + 90 : 100;
+    const posY = sourceNode ? sourceNode.position.y : 100;
+    setNodes((current) => [
+      ...current,
+      {
+        id,
+        type: "studio",
+        position: { x: posX, y: posY },
+        data: {
+          kind: "generator",
+          version: "1.0",
+          config,
+          ...presentation,
+          imageUrl: asset.url,
+          downloadUrl: asset.url,
+          imageAspectRatio: aspectRatio,
+          output: `衍生图片 (${asset.filename})`,
+        },
+      },
+    ]);
+    if (sourceNode) {
+      setEdges((current) => addEdge({
+        id: crypto.randomUUID(),
+        type: "studio",
+        source: sourceNodeId,
+        target: id,
+      }, current));
+    }
+    setSelectedNodeId(id);
+  }, [configuredImageProvider, nodes, providerCapabilities, selectedShot, setEdges, setNodes]);
+
   const studioNodeActions = useMemo(() => ({
     onTextContentChange: updateNodeTextContent,
     onExtractLastFrame: (nodeId: string) => void extractLastFrameToImageNode(nodeId),
     extractingFrameNodeId,
+    onEditImage: (nodeId: string, imageUrl: string, title: string) => {
+      setEditingImage({ imageUrl, title, nodeId });
+    },
   }), [extractLastFrameToImageNode, extractingFrameNodeId, updateNodeTextContent]);
   const editableNodeSignature = useMemo(
     () => nodes.map((node) => `${node.id}:${node.data.kind}:${creationMode(node.data.config) ?? "none"}`).join("|"),
@@ -1557,6 +1708,13 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
                 onClose={() => setAssetLibraryOpen(false)}
                 onUpload={(files) => void uploadProjectAssets(files)}
                 onInsert={selectProjectAsset}
+                onEdit={(asset) => {
+                  setEditingImage({
+                    imageUrl: asset.url,
+                    title: asset.filename,
+                    assetId: asset.id,
+                  });
+                }}
                 onDelete={(asset) => void deleteProjectAsset(asset)}
                 onRefresh={() => void refreshProjectAssets()}
               />
@@ -1685,6 +1843,19 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
         onOpenChange={setCreditCenterOpen}
         wallet={wallet}
         onWalletUpdated={setWallet}
+      />
+
+      <ImageEditorDialog
+        open={Boolean(editingImage)}
+        onOpenChange={(open) => {
+          if (!open) setEditingImage(null);
+        }}
+        imageUrl={editingImage?.imageUrl ?? ""}
+        title={editingImage?.title ?? "图片编辑"}
+        nodeId={editingImage?.nodeId}
+        onSaveAsAsset={handleSaveEditedAsset}
+        onUpdateNodeImage={handleUpdateNodeImage}
+        onCreateDerivedNode={handleCreateDerivedNode}
       />
     </main>
   );

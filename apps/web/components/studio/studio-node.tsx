@@ -1,6 +1,6 @@
 import { createContext, useContext } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
-import { Download, ImageDown, ImageIcon, LoaderCircle, Plus, Video } from "lucide-react";
+import { Crop, Download, ImageDown, ImageIcon, LoaderCircle, Plus, Video } from "lucide-react";
 
 import { Textarea } from "@/components/ui/textarea";
 
@@ -11,12 +11,14 @@ type StudioNodeActions = {
   onTextContentChange: (nodeId: string, value: string) => void;
   onExtractLastFrame: (nodeId: string) => void;
   extractingFrameNodeId: string | null;
+  onEditImage?: (nodeId: string, imageUrl: string, title: string) => void;
 };
 
 export const StudioNodeActionsContext = createContext<StudioNodeActions>({
   onTextContentChange: () => undefined,
   onExtractLastFrame: () => undefined,
   extractingFrameNodeId: null,
+  onEditImage: () => undefined,
 });
 
 function MediaDownload({ href, kind }: { href?: string; kind: "图片" | "视频" }) {
@@ -32,6 +34,35 @@ function MediaDownload({ href, kind }: { href?: string; kind: "图片" | "视频
     >
       <Download aria-hidden="true" />
     </a>
+  );
+}
+
+function ImageActions({
+  downloadUrl,
+  onEdit,
+}: {
+  downloadUrl?: string;
+  onEdit?: () => void;
+}) {
+  return (
+    <div className="flow-node__media-actions nodrag nowheel">
+      {onEdit ? (
+        <button
+          className="flow-node__media-action flow-node__media-action--edit"
+          type="button"
+          aria-label="编辑与裁剪图片"
+          title="编辑、裁剪与一键抠图"
+          onClick={(event) => {
+            event.stopPropagation();
+            onEdit();
+          }}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <Crop aria-hidden="true" />
+        </button>
+      ) : null}
+      <MediaDownload href={downloadUrl} kind="图片" />
+    </div>
   );
 }
 
@@ -70,6 +101,7 @@ export function StudioNode({ id, data, selected }: NodeProps<StudioFlowNode>) {
     onTextContentChange,
     onExtractLastFrame,
     extractingFrameNodeId,
+    onEditImage,
   } = useContext(StudioNodeActionsContext);
   const mode = creationMode(data.config);
   const isCreationNode = data.kind === "generator";
@@ -103,7 +135,10 @@ export function StudioNode({ id, data, selected }: NodeProps<StudioFlowNode>) {
           style={{ aspectRatio: data.imageAspectRatio ?? 16 / 9 }}
           title={data.output}
         >
-          <div className="flow-node__media-actions"><MediaDownload href={data.downloadUrl} kind="图片" /></div>
+          <ImageActions
+            downloadUrl={data.downloadUrl}
+            onEdit={data.imageUrl && onEditImage ? () => onEditImage(id, data.imageUrl!, data.title) : undefined}
+          />
           <img
             className="flow-node__image"
             src={data.imageUrl}

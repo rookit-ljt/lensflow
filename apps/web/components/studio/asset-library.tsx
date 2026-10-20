@@ -3,6 +3,7 @@
 import { useMemo, useRef, useState } from "react";
 import {
   CircleAlert,
+  Crop,
   Download,
   FileImage,
   Film,
@@ -40,6 +41,7 @@ type AssetLibraryProps = {
   onClose: () => void;
   onUpload: (files: File[]) => void;
   onInsert: (asset: ProjectAsset) => void;
+  onEdit?: (asset: ProjectAsset) => void;
   onDelete: (asset: ProjectAsset) => void;
   onRefresh: () => void;
 };
@@ -79,6 +81,7 @@ export function AssetLibrary({
   onClose,
   onUpload,
   onInsert,
+  onEdit,
   onDelete,
   onRefresh,
 }: AssetLibraryProps) {
@@ -185,6 +188,14 @@ export function AssetLibrary({
                         >
                           <ImagePlus />插入节点
                         </Button>
+                      ) : null}
+                      {asset.kind === "image" && onEdit ? (
+                        <Tooltip>
+                          <TooltipTrigger render={<Button type="button" variant="outline" size="icon-sm" aria-label={`编辑 ${asset.filename}`} onClick={() => onEdit(asset)} />}>
+                            <Crop />
+                          </TooltipTrigger>
+                          <TooltipContent>编辑 / 裁剪 / 抠图</TooltipContent>
+                        </Tooltip>
                       ) : null}
                       <Tooltip>
                         <TooltipTrigger render={<Button render={<a href={assetDownloadUrl(asset)} download={asset.filename} />} variant="outline" size="icon-sm" aria-label={`下载 ${asset.filename}`} />}>
