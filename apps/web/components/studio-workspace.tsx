@@ -1207,9 +1207,35 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
     });
   }, [setEdges]);
 
-  const addCanvasNode = useCallback(() => {
-    if (!selectedShot) return;
-    const id = crypto.randomUUID();
+  const addCanvasNode = useCallback(async () => {
+    let currentShot = selectedShot;
+    if (!currentShot) {
+      if (!project) return;
+      setSyncState("saving");
+      try {
+        const shot = await api.createShot(project.id, {
+          sequence_number: 1,
+          title: "第一镜头",
+          description: "默认创建镜头",
+          visual_prompt: "",
+          duration_seconds: 5,
+        });
+        currentShot = shot;
+        setProject((prev) => (prev ? { ...prev, shots: [...prev.shots, shot] } : prev));
+        setSelectedShotId(shot.id);
+        const loadedWf = await api.getWorkflow(shot.id, { empty: true });
+        setWorkflow(loadedWf);
+        setWorkflowReady(true);
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : "创建镜头失败");
+        setSyncState("error");
+        return;
+      }
+    }
+
+    const id = typeof globalThis.crypto?.randomUUID === "function"
+      ? globalThis.crypto.randomUUID()
+      : `node-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     const config = {
       node_id: id,
       mode: null,
@@ -1222,7 +1248,7 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
       panorama: false,
       seed: -1,
     };
-    const presentation = presentNode("generator", config, selectedShot);
+    const presentation = presentNode("generator", config, currentShot);
     const nodeWidth = 290;
     const nodeHeight = 158;
     const centerPosition = canvasCenter
@@ -1238,7 +1264,7 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
       },
     ]);
     setSelectedNodeId(id);
-  }, [canvasCenter, selectedShot, setNodes]);
+  }, [canvasCenter, project, selectedShot, setNodes]);
 
   const updateSelectedNodeConfig = useCallback((patch: Record<string, unknown>) => {
     if (!selectedNodeId || !selectedShot) return;
@@ -1537,7 +1563,7 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
             </>
           ) : null}
 
-          {selectedShot && workflowReady && selectedNode ? (
+          {selectedShot && workflowReady ? (
             <>
               <section className="canvas-stage" aria-label="工作流画布">
                 <div className="canvas-toolbar">
@@ -1589,7 +1615,7 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
                       <MiniMap pannable zoomable nodeColor={(node) => (node.data as StudioNodeData).stage === "done" ? "#65bdc2" : "#617c8f"} />
                     </ReactFlow>
                   </StudioNodeActionsContext.Provider>
-                  {selectedNodeId && selectedNode.data.kind === "generator" ? (
+                  {selectedNodeId && selectedNode && selectedNode.data.kind === "generator" ? (
                     <NodeComposer
                       node={selectedNode}
                       generation={selectedNodeGeneration}

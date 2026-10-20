@@ -190,28 +190,68 @@ export function CanvasSideRail({
   return (
     <nav className="canvas-side-rail" aria-label="画布工具">
       <Tooltip>
-        <TooltipTrigger render={<Button className="rail-primary-action" type="button" size="icon-lg" onClick={onAddNode} aria-label="添加空白节点" />}>
-          <Plus />
-        </TooltipTrigger>
+        <TooltipTrigger
+          render={
+            <Button
+              className="rail-primary-action"
+              type="button"
+              size="icon-lg"
+              onClick={onAddNode}
+              aria-label="添加空白节点"
+            >
+              <Plus />
+            </Button>
+          }
+        />
         <TooltipContent side="right">添加空白节点</TooltipContent>
       </Tooltip>
       <Separator />
       <Tooltip>
-        <TooltipTrigger render={<Button type="button" variant="ghost" size="icon" onClick={onToggleShots} aria-label="镜头列表" />}>
-          <Boxes />
-        </TooltipTrigger>
+        <TooltipTrigger
+          render={
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={onToggleShots}
+              aria-label="镜头列表"
+            >
+              <Boxes />
+            </Button>
+          }
+        />
         <TooltipContent side="right">镜头列表</TooltipContent>
       </Tooltip>
       <Tooltip>
-        <TooltipTrigger render={<Button type="button" variant="ghost" size="icon" onClick={onToggleAssets} aria-label="资产库" />}>
-          <FolderArchive />
-        </TooltipTrigger>
+        <TooltipTrigger
+          render={
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={onToggleAssets}
+              aria-label="资产库"
+            >
+              <FolderArchive />
+            </Button>
+          }
+        />
         <TooltipContent side="right">项目资产库</TooltipContent>
       </Tooltip>
       <Tooltip>
-        <TooltipTrigger render={<Button type="button" variant="ghost" size="icon" onClick={onToggleAgent} aria-label="Chat Agent" />}>
-          <Bot />
-        </TooltipTrigger>
+        <TooltipTrigger
+          render={
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={onToggleAgent}
+              aria-label="Chat Agent"
+            >
+              <Bot />
+            </Button>
+          }
+        />
         <TooltipContent side="right">Chat Agent</TooltipContent>
       </Tooltip>
     </nav>
