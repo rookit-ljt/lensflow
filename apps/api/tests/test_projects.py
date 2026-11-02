@@ -73,7 +73,9 @@ def test_create_project_and_shot() -> None:
 
         list_response = client.get(f"/api/shots/{shot_id}/generations")
         assert list_response.status_code == 200
-        assert list_response.json()[0]["id"] == generation["id"]
+        generation_ids = [item["id"] for item in list_response.json()]
+        assert generation["id"] in generation_ids
+        assert text_generation["id"] in generation_ids
 
         workflow_response = client.get(f"/api/shots/{shot_id}/workflow")
         assert workflow_response.status_code == 200
