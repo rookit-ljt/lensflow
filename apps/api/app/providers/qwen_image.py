@@ -19,6 +19,8 @@ class QwenImageProvider:
     multimodal_models: ClassVar[set[str]] = {
         "qwen-image-2.0-pro",
         "qwen-image-2.0",
+        "qwen-image-2.1-pro",
+        "qwen-image-2.1",
         "qwen-image-3.0-pro",
         "qwen-image-3.0",
     }

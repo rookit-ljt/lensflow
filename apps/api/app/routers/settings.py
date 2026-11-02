@@ -29,6 +29,7 @@ QWEN_TEXT_MODELS = (
     "qwen-plus",
 )
 QWEN_IMAGE_MODELS = (
+    "qwen-image-2.1-pro",
     "qwen-image-2.0-pro",
     "qwen-image-2.0",
     "qwen-image-plus",
