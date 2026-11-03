@@ -28,6 +28,7 @@ import { AgentQuestionDialog } from "@/components/studio/agent-question-dialog";
 import { MentionPicker, type MentionOption, type MentionRef } from "@/components/studio/mention-picker";
 import { SkillLibrary, type ChatSkill } from "@/components/studio/skill-library";
 import type { StudioFlowNode } from "@/components/studio/studio-types";
+import { generateUUID } from "@/lib/utils";
 import {
   api,
   type AgentMention,
@@ -239,7 +240,7 @@ function messageFromEvent(event: AgentEvent, threadId: string): AgentMessage | n
     ? payload.role
     : "assistant";
   return {
-    id: typeof payload.message_id === "string" ? payload.message_id : crypto.randomUUID(),
+    id: typeof payload.message_id === "string" ? payload.message_id : generateUUID(),
     thread_id: threadId,
     run_id: event.run_id,
     role,
@@ -531,7 +532,7 @@ export function ChatAgent({
     const mentions: AgentMention[] = value ? [] : draftMentions;
     setDraftMentions([]);
     const optimisticMessage: AgentMessage = {
-      id: `local-${crypto.randomUUID()}`,
+      id: `local-${generateUUID()}`,
       thread_id: thread.id,
       run_id: null,
       role: "user",

@@ -44,6 +44,7 @@ import {
   type WorkflowWrite,
 } from "@/lib/api";
 
+import { generateUUID } from "@/lib/utils";
 import { CreditCenterDialog } from "@/components/studio/credit-center-dialog";
 import { ImageEditorDialog } from "@/components/studio/image-editor-dialog";
 import { NodeComposer } from "@/components/studio/node-composer";
@@ -86,10 +87,7 @@ const emptyGenerationHistory: Generation[] = [];
 const workspaceNodeTypes: NodeTypes = { studio: StudioNode };
 
 function createWorkflowOperationId(): string {
-  if (typeof globalThis.crypto?.randomUUID === "function") {
-    return globalThis.crypto.randomUUID();
-  }
-  return `workflow-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return generateUUID();
 }
 
 function workflowPayload(
@@ -446,7 +444,7 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
     setError(null);
     try {
       const asset = await api.extractGenerationLastFrame(sourceGeneration.id);
-      const id = crypto.randomUUID();
+      const id = generateUUID();
       const width = numberConfig(sourceNode.data.config, "width", 16);
       const height = numberConfig(sourceNode.data.config, "height", 9);
       const aspectRatio = width > 0 && height > 0 ? width / height : 16 / 9;
@@ -486,7 +484,7 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
         },
       ]);
       setEdges((current) => addEdge({
-        id: crypto.randomUUID(),
+        id: generateUUID(),
         type: "studio",
         source: sourceNodeId,
         target: id,
@@ -583,7 +581,7 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
       && provider.configured
       && (provider.id === "qwen" || provider.id === "google_genai")
     )) ?? configuredImageProvider;
-    const id = crypto.randomUUID();
+    const id = generateUUID();
     const config = {
       node_id: id,
       mode: "image",
@@ -631,7 +629,7 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
     ]);
     if (sourceNode) {
       setEdges((current) => addEdge({
-        id: crypto.randomUUID(),
+        id: generateUUID(),
         type: "studio",
         source: sourceNodeId,
         target: id,
@@ -1354,7 +1352,7 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
         return current;
       }
       setError(null);
-      return addEdge({ ...connection, id: crypto.randomUUID(), type: "studio" }, current);
+      return addEdge({ ...connection, id: generateUUID(), type: "studio" }, current);
     });
   }, [setEdges]);
 
@@ -1384,9 +1382,7 @@ export function StudioWorkspace({ currentUser, projectId, onLogout }: StudioWork
       }
     }
 
-    const id = typeof globalThis.crypto?.randomUUID === "function"
-      ? globalThis.crypto.randomUUID()
-      : `node-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    const id = generateUUID();
     const config = {
       node_id: id,
       mode: null,

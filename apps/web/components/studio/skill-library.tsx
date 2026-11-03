@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { AgentSkill } from "@/lib/api";
+import { generateUUID } from "@/lib/utils";
 
 export type ChatSkill = AgentSkill & {
   instruction: string;
@@ -85,7 +86,7 @@ export function SkillLibrary({ open, skills, selectedSkillId, onClose, onSelect 
     const trimmedName = name.trim();
     const trimmedInstruction = instruction.trim();
     if (!trimmedName || !trimmedInstruction) return;
-    const id = `custom-${crypto.randomUUID()}`;
+    const id = `custom-${generateUUID()}`;
     const next: ChatSkill = {
       id,
       name: trimmedName,
